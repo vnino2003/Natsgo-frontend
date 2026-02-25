@@ -8,11 +8,21 @@
       <div class="notif-title">
         <i class="fas fa-bell"></i>
         <span>Notifications</span>
+        <span v-if="unreadCount > 0" class="notif-badge">{{ unreadCount }}</span>
       </div>
 
-      <button class="notif-close" type="button" @click="close">
-        <i class="fas fa-times"></i>
-      </button>
+      <div class="notif-actions">
+        <button class="notif-action" type="button" @click="$emit('mark-all-read')">
+          Mark all read
+        </button>
+        <button class="notif-action danger" type="button" @click="$emit('clear')">
+          Clear
+        </button>
+
+        <button class="notif-close" type="button" @click="close" aria-label="Close">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
     </div>
 
     <div class="notif-content">
@@ -21,7 +31,7 @@
         <p>No notifications</p>
       </div>
 
-      <div v-for="n in items" :key="n.id" class="notif-item">
+      <div v-for="n in items" :key="n.id" class="notif-item" :class="{ read: !!n.read }">
         <div class="notif-icon">
           <i :class="notifIcon(n.type)"></i>
         </div>
@@ -47,15 +57,25 @@
 </template>
 
 <script setup>
+import { computed } from "vue";
+
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
-  items: { type: Array, default: () => [] }, // [{id,title,message,time,type}]
-})
+  items: { type: Array, default: () => [] }, // [{id,title,message,time,type,read}]
+});
 
-const emit = defineEmits(["update:modelValue", "open", "dismiss"])
+const emit = defineEmits([
+  "update:modelValue",
+  "open",
+  "dismiss",
+  "mark-all-read",
+  "clear",
+]);
+
+const unreadCount = computed(() => props.items.filter((x) => !x.read).length);
 
 function close() {
-  emit("update:modelValue", false)
+  emit("update:modelValue", false);
 }
 
 function notifIcon(type) {
@@ -64,8 +84,8 @@ function notifIcon(type) {
     route: "fas fa-route",
     alert: "fas fa-triangle-exclamation",
     info: "fas fa-circle-info",
-  }
-  return map[type] || map.info
+  };
+  return map[type] || map.info;
 }
 </script>
 
@@ -102,6 +122,7 @@ function notifIcon(type) {
   display:flex;
   align-items:center;
   justify-content: space-between;
+  gap: 10px;
 }
 .notif-title{
   display:flex;
@@ -111,6 +132,37 @@ function notifIcon(type) {
   color: var(--text-dark);
 }
 .notif-title i{ color: var(--accent-teal); }
+
+.notif-badge{
+  font-size: 11px;
+  font-weight: 900;
+  color: #fff;
+  background: linear-gradient(135deg, var(--primary-blue), var(--accent-teal));
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+.notif-actions{
+  display:flex;
+  align-items:center;
+  gap: 8px;
+}
+.notif-action{
+  border: 1px solid var(--border-light);
+  background: #fff;
+  color: var(--text-dark);
+  font-weight: 900;
+  font-size: 11px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.notif-action:hover{ background: rgba(0, 188, 212, 0.08); }
+.notif-action.danger{
+  color: #b91c1c;
+  border-color: rgba(185, 28, 28, 0.25);
+}
+.notif-action.danger:hover{ background: rgba(185, 28, 28, 0.08); }
 
 .notif-close{
   background: none;
@@ -159,7 +211,11 @@ function notifIcon(type) {
   gap: 12px;
   margin-bottom: 10px;
 }
+.notif-item.read{
+  opacity: 0.72;
+}
 
+/* icon */
 .notif-icon{
   width: 40px;
   height: 40px;
@@ -196,7 +252,7 @@ function notifIcon(type) {
   font-weight: 700;
 }
 
-/* dismiss button */
+/* dismiss */
 .notif-dismiss{
   background: transparent;
   border: none;

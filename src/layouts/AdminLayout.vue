@@ -16,11 +16,33 @@
 </template>
 
 <script setup>
-import { ref } from "vue"
-import "../assets/css/admin.css"  // adjust path
-import AdminSidebar from "../components/admin/layout/AdminSidebar.vue"
-import AdminTopbar from "../components/admin/layout/AdminTopbar.vue"
+import { ref, onMounted, onBeforeUnmount } from "vue";
+import { useRouter } from "vue-router";
 
-const sidebarCollapsed = ref(false)
+import "../assets/css/admin.css";
+import AdminSidebar from "../components/admin/layout/AdminSidebar.vue";
+import AdminTopbar from "../components/admin/layout/AdminTopbar.vue";
+
+import { useNotificationToasts } from "@/composables/useNotificationToasts";
+
+const sidebarCollapsed = ref(false);
+const router = useRouter();
+
+const toastFeed = useNotificationToasts({
+  pollMs: 3000,
+  previewLimit: 5,
+  autoCloseMs: 5000,
+});
+
+function goNotifications() {
+  router.push("/admin/notifications");
+}
+
+onMounted(() => {
+  toastFeed.start({ onOpenNotifications: goNotifications });
+});
+
+onBeforeUnmount(() => {
+  toastFeed.stop();
+});
 </script>
-

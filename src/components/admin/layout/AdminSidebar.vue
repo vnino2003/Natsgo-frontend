@@ -1,9 +1,23 @@
 <template>
-  <aside class="admin-sidebar" :class="{ collapsed: collapsed }">
+  <!-- Backdrop for mobile drawer -->
+  <div
+    v-if="drawer && !collapsed"
+    class="as-backdrop"
+    @click="$emit('update:collapsed', true)"
+  ></div>
+
+  <aside
+    class="admin-sidebar"
+    :class="{
+      collapsed: collapsed,
+      drawer: drawer,
+      open: drawer && !collapsed,
+    }"
+  >
     <!-- Brand -->
     <div class="as-brand">
       <div class="as-logo">
-        <i class="fas fa-bus"></i>
+        <span class="as-logo-letter">N</span>
       </div>
 
       <div v-if="!collapsed" class="as-brand-text">
@@ -41,7 +55,6 @@
         <span v-if="!collapsed">Terminals</span>
       </RouterLink>
 
-      <!-- ✅ IoT (submenu) -->
       <p v-if="!collapsed" class="as-section">IoT</p>
 
       <!-- Parent item -->
@@ -65,11 +78,7 @@
 
       <!-- Submenu -->
       <div class="as-submenu" :class="{ open: iotOpen && !collapsed }">
-        <RouterLink
-          class="as-subitem"
-          to="/admin/iot/devices"
-          title="Devices"
-        >
+        <RouterLink class="as-subitem" to="/admin/iot/devices" title="Devices">
           <i class="fas fa-sim-card"></i>
           <span>Devices</span>
         </RouterLink>
@@ -83,14 +92,10 @@
           <span>Assignments</span>
         </RouterLink>
 
-        <RouterLink
-          class="as-subitem"
-          to="/admin/iot/health"
-          title="Health Monitor"
-        >
+        <!-- <RouterLink class="as-subitem" to="/admin/iot/health" title="Health Monitor">
           <i class="fas fa-heart-pulse"></i>
           <span>Health Monitor</span>
-        </RouterLink>
+        </RouterLink> -->
       </div>
 
       <p v-if="!collapsed" class="as-section">Monitoring</p>
@@ -135,28 +140,26 @@ import { computed, ref, watchEffect } from "vue"
 import { useRoute } from "vue-router"
 
 const props = defineProps({
-  collapsed: { type: Boolean, default: false },
+  collapsed: { type: Boolean, default: true }, // ✅ on mobile: treat as closed by default
+  drawer: { type: Boolean, default: false },   // ✅ enable overlay-drawer behavior
 })
 defineEmits(["update:collapsed"])
 
 const collapsed = computed(() => props.collapsed)
+const drawer = computed(() => props.drawer)
 
 const route = useRoute()
-
 const isIoTRoute = computed(() => String(route.path || "").startsWith("/admin/iot"))
 
 const iotOpen = ref(false)
 
 function toggleIoT() {
-  // if collapsed, don't open submenu (no space)
   if (collapsed.value) return
   iotOpen.value = !iotOpen.value
 }
 
-// auto-open when navigating inside /admin/iot
 watchEffect(() => {
   if (collapsed.value) return
   if (isIoTRoute.value) iotOpen.value = true
 })
 </script>
-

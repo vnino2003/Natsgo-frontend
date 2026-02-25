@@ -9,13 +9,24 @@ export function useLiveBuses({ intervalMs = 1000 } = {}) {
 
   let timer = null;
 
+  function isGpsActive(row) {
+    return String(row?.gps_state || "").toLowerCase() === "active";
+  }
+
+  function isDeviceOk(row) {
+    return String(row?.device_status || "").toLowerCase() === "online";
+  }
+
+  function isBusOk(row) {
+    const s = String(row?.bus_status || "active").toLowerCase();
+    // adjust based on your actual values
+    return ["active", "online", "in_service"].includes(s);
+  }
+
   function normalize(row) {
     const capacity = Number(row.capacity ?? 0);
-
-    // ✅ passenger_count from ir_status (backend should COALESCE to 0)
     const passengerCount = Number(row.passenger_count ?? 0);
 
-    // ✅ map to UI fields expected by TrackBusPage
     const route = row.bus_code
       ? `${row.bus_code} • ${row.plate_no || ""}`.trim()
       : row.plate_no || `Bus #${row.bus_id}`;
@@ -23,7 +34,6 @@ export function useLiveBuses({ intervalMs = 1000 } = {}) {
     const trackNo = row.bus_code || String(row.bus_id);
 
     return {
-      // identity
       id: row.bus_id,
       bus_id: row.bus_id,
       bus_code: row.bus_code,
@@ -31,7 +41,6 @@ export function useLiveBuses({ intervalMs = 1000 } = {}) {
       capacity,
       bus_status: row.bus_status,
 
-      // ✅ seats used in UI
       seats: passengerCount,
       passenger_count: passengerCount,
       in_total: Number(row.in_total ?? 0),
@@ -39,11 +48,9 @@ export function useLiveBuses({ intervalMs = 1000 } = {}) {
       last_event: row.last_event ?? null,
       last_event_at: row.last_event_at ?? null,
 
-      // ✅ UI display fields
       route,
       trackNo,
 
-      // assigned device
       device_id: row.device_id,
       device_code: row.device_code,
       esp32_id: row.esp32_id,
@@ -51,7 +58,6 @@ export function useLiveBuses({ intervalMs = 1000 } = {}) {
       gps_state: row.gps_state,
       last_seen_at: row.last_seen_at,
 
-      // latest GPS
       lat: Number(row.lat),
       lng: Number(row.lng),
       speedKmh: row.speed_kmh != null ? Number(row.speed_kmh) : null,
@@ -72,6 +78,8 @@ export function useLiveBuses({ intervalMs = 1000 } = {}) {
 
       buses.value = list
         .filter((x) => x && x.bus_id && x.lat != null && x.lng != null)
+        // ✅ HARD FILTER: show only if GPS active + bus ok + device ok
+        .filter((x) => isGpsActive(x) && isDeviceOk(x) && isBusOk(x))
         .map(normalize);
     } catch (e) {
       error.value = e?.response?.data?.message || e?.message || "Failed to load live buses";
@@ -102,4 +110,3 @@ export function useLiveBuses({ intervalMs = 1000 } = {}) {
     stop,
   };
 }
-        

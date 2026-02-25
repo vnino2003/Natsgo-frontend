@@ -1,13 +1,14 @@
     <template>
         <!-- Drawer (Home only) -->
         <DrawerMenu v-model="drawerOpen" @open-auth="authOpen = true" />
-          <NotificationDrawer
-    v-model="notifOpen"
-    :items="notifications"
-    @open="openNotif"
-    @mark-all-read="markAllRead"
-    @clear="clearNotifs"
-  />
+   <NotificationDrawer
+  v-model="notifOpen"
+  :items="notifications"
+  @open="openNotif"
+  @dismiss="dismiss"
+  @mark-all-read="markAllRead"
+  @clear="clear"
+/>
         <!-- Auth Modal -->
         <AuthModal v-model="authOpen" />
 
@@ -45,54 +46,45 @@
         </div>
         </div>
     </template>
-
 <script setup>
-import { ref } from "vue"
+import { ref } from "vue";
 
-import DrawerMenu from "../../components/commuters/home/DrawerMenu.vue"
-import HomeHeader from "../../components/commuters/home/HomeHeader.vue"
-import AuthModal from "../../components/commuters/authModal/AuthModal.vue"
-import WeatherCard from "../../components/commuters/home/WeatherCard.vue"
-import HomeTabs from "../../components/commuters/home/HomeTabs/HomeTabs.vue"
-import NearestBusesSection from "../../components/commuters/home/NearestBusCard.vue"
-import NotificationDrawer from "../../components/commuters/home/NotificationDrawer.vue" // ✅ ADD THIS
+import DrawerMenu from "../../components/commuters/home/DrawerMenu.vue";
+import HomeHeader from "../../components/commuters/home/HomeHeader.vue";
+import AuthModal from "../../components/commuters/authModal/AuthModal.vue";
+import WeatherCard from "../../components/commuters/home/WeatherCard.vue";
+import HomeTabs from "../../components/commuters/home/HomeTabs/HomeTabs.vue";
+import NearestBusesSection from "../../components/commuters/home/NearestBusCard.vue";
+import NotificationDrawer from "../../components/commuters/home/NotificationDrawer.vue";
 
-const drawerOpen = ref(false)
-const authOpen = ref(false)
-const notifOpen = ref(false) // ✅ ADD THIS
-const search = ref("")
+import { useNearbyBusAlerts } from "@/composables/useNearbyBusAlerts";
 
-// ✅ sample notifications
-const notifications = ref([
-  {
-    id: 1,
-    title: "Bus 12 is near",
-    message: "2 mins away • Route A → B",
-    time: "Just now",
-    read: false,
-    type: "bus",
-  },
-  {
-    id: 2,
-    title: "Route Update",
-    message: "Route 5 has a detour today.",
-    time: "10 mins ago",
-    read: false,
-    type: "route",
-  },
-])
+const drawerOpen = ref(false);
+const authOpen = ref(false);
+const notifOpen = ref(false);
+const search = ref("");
+
+// ✅ dynamic nearby notifications
+const {
+  notifications,
+  markAllRead,
+  dismiss,
+  clear,
+} = useNearbyBusAlerts({
+  intervalMs: 1500,
+  maxNearest: 4,
+  nearKm: 1.0,         // when bus is within 1.0km => notif
+  cooldownMs: 5 * 60 * 1000, // avoid spam per bus
+});
 
 function openNotif(n) {
-  n.read = true
-  notifOpen.value = false
-}
+  // mark read
+  n.read = true;
 
-function markAllRead() {
-  notifications.value.forEach(n => (n.read = true))
-}
+  // optional: close drawer
+  notifOpen.value = false;
 
-function clearNotifs() {
-  notifications.value = []
+  // optional: navigate to tracking page / focus bus using n.meta.bus_id
+  // (if you want this next, tell me your route path)
 }
 </script>
-

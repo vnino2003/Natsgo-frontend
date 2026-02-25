@@ -1,9 +1,8 @@
 <!-- src/pages/commuters/TrackBusPage.vue
   ✅ Applied:
   - Uses composable useLiveBuses() (NO direct axios here)
-  - Fetches ONLY buses with assigned device + latest gps
-  - Draws bus markers + terminal markers
-  - Shows route direction (current → target) + at_terminal + dist_m
+  - Fetches ONLY buses with assigned device + latest gps (via /api/commuter/buses/live)
+  - Redraw markers when buses list updates (watch)
   - Keeps your location gate + bottom sheet + UI intact
 -->
 
@@ -91,24 +90,6 @@
             <button class="tb-bus-close" @click="closeSelected" aria-label="Close">
               <i class="fas fa-times"></i>
             </button>
-          </div>
-
-          <!-- ✅ Route direction + terminal status -->
-          <div class="tb-route-line">
-            <span class="tb-route-pill">
-              <i class="fas fa-route"></i>
-              {{ selectedBus.routeDir ?? "—" }}
-            </span>
-
-            <span class="tb-route-pill" :class="selectedBus.at_terminal ? 'ok' : 'warn'">
-              <i class="fas" :class="selectedBus.at_terminal ? 'fa-location-dot' : 'fa-road'"></i>
-              {{ selectedBus.at_terminal ? "At terminal" : "En route" }}
-            </span>
-
-            <span v-if="selectedBus.dist_m != null" class="tb-route-pill">
-              <i class="fas fa-ruler"></i>
-              {{ Math.round(selectedBus.dist_m) }} m to target
-            </span>
           </div>
 
           <div class="tb-bus-meta">
@@ -219,15 +200,7 @@
                   <p class="tb-bus-row-title">{{ bus.route }}</p>
                 </div>
 
-                <!-- ✅ show route direction in list -->
                 <div class="tb-row-line2">
-                  <span class="tb-metric tb-muted">
-                    <i class="fas fa-route"></i>
-                    {{ bus.routeDir ?? "—" }}
-                  </span>
-
-                  <span class="tb-dotsep">•</span>
-
                   <span class="tb-metric">
                     <i class="fas fa-location-dot"></i>
                     {{ hasUserLocation ? formatKm(distanceKm(bus)) : "—" }}
@@ -287,16 +260,9 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import L from "leaflet";
 import { useLiveBuses } from "../../composables/useLiveBuses";
 
-/* ========= NEW: terminals fetch (simple, no extra file needed) ========= */
-async function fetchPublicTerminals() {
-  // uses your existing axios instance in http.js baseURL
-  // IMPORTANT: route must exist -> GET /api/terminals
-  const api = (await import("../../services/api/http")).default;
-  return api.get("/terminals");
-}
-
 /* ========= State ========= */
-const FALLBACK_VIEW = { lat: 12.8797, lng: 121.774 }; // PH center-ish
+// Neutral fallback view (not “user location”)
+const FALLBACK_VIEW = { lat: 12.8797, lng: 121.774 }; // Philippines center-ish
 
 const mapEl = ref(null);
 const sheetEl = ref(null);
@@ -314,10 +280,6 @@ const { buses, start: startLive, stop: stopLive, fetchOnce } = useLiveBuses({ in
 
 const query = ref("");
 const filter = ref("nearby");
-
-/* ========= NEW: terminals state ========= */
-const terminals = ref([]);
-let terminalTimer = null;
 
 /* ========= Location Gate ========= */
 const gateStatus = ref("idle"); // idle | requesting | connecting | connected | error
@@ -415,9 +377,7 @@ watch(hasUserLocation, (val) => {
 /* ========= Leaflet ========= */
 let map = null;
 let userMarker = null;
-
 const busMarkers = new Map();
-const terminalMarkers = new Map();
 
 function initLeaflet() {
   if (!mapEl.value || map) return;
@@ -473,7 +433,6 @@ function removeUserMarker() {
   userMarker = null;
 }
 
-/* ===== Bus marker ===== */
 function makeBusDivIcon(bus, isSelected = false) {
   const cls = occClass(bus);
   const sel = isSelected ? "selected" : "";
@@ -520,64 +479,6 @@ function refreshAllBusMarkerIcons() {
   }
 }
 
-/* ===== Terminal markers ===== */
-function makeTerminalDivIcon(t) {
-  const count = Number(t.bus_count ?? 0);
-  return L.divIcon({
-    className: "tb-leaflet-terminal-icon",
-    html: `
-      <div class="tb-terminal-pill">
-        <i class="fas fa-location-dot"></i>
-        <span class="tb-terminal-badge">${count}</span>
-      </div>
-    `,
-    iconSize: [38, 38],
-    iconAnchor: [19, 19],
-  });
-}
-
-function syncTerminalMarkers() {
-  if (!map) return;
-
-  const list = terminals.value || [];
-  const nextIds = new Set(list.map((t) => t.terminal_id));
-
-  // remove old
-  for (const id of terminalMarkers.keys()) {
-    if (!nextIds.has(id)) {
-      const m = terminalMarkers.get(id);
-      if (m) map.removeLayer(m);
-      terminalMarkers.delete(id);
-    }
-  }
-
-  // add/update
-  for (const t of list) {
-    if (t.lat == null || t.lng == null) continue;
-
-    const id = t.terminal_id;
-    const pos = [Number(t.lat), Number(t.lng)];
-
-    const popupHtml = `
-      <div style="font-weight:900; margin-bottom:4px;">${t.terminal_name}</div>
-      <div style="font-weight:800; color:#555;">${t.city}</div>
-      <div style="margin-top:6px; font-weight:900;">Buses here: ${Number(t.bus_count ?? 0)}</div>
-    `;
-
-    const existing = terminalMarkers.get(id);
-    if (existing) {
-      existing.setLatLng(pos);
-      existing.setIcon(makeTerminalDivIcon(t));
-      existing.setPopupContent(popupHtml);
-    } else {
-      const m = L.marker(pos, { icon: makeTerminalDivIcon(t) }).addTo(map);
-      m.bindPopup(popupHtml);
-      terminalMarkers.set(id, m);
-    }
-  }
-}
-
-/* ===== View helpers ===== */
 function focusBus(bus) {
   if (!map) return;
   map.flyTo([bus.lat, bus.lng], Math.max(map.getZoom(), 16), { duration: 0.5 });
@@ -891,33 +792,6 @@ watch(
   { deep: true }
 );
 
-watch(
-  terminals,
-  () => {
-    syncTerminalMarkers();
-  },
-  { deep: true }
-);
-
-/* ========= Terminals polling ========= */
-async function loadTerminalsOnce() {
-  try {
-    const res = await fetchPublicTerminals();
-    terminals.value = Array.isArray(res.data) ? res.data : [];
-  } catch {
-    // ignore (map still works without terminals)
-  }
-}
-function startTerminalPolling() {
-  stopTerminalPolling();
-  loadTerminalsOnce();
-  terminalTimer = setInterval(loadTerminalsOnce, 5000);
-}
-function stopTerminalPolling() {
-  if (terminalTimer) clearInterval(terminalTimer);
-  terminalTimer = null;
-}
-
 /* ========= Lifecycle ========= */
 onMounted(async () => {
   initLeaflet();
@@ -929,23 +803,16 @@ onMounted(async () => {
   requestAnimationFrame(() => map?.invalidateSize());
   setTimeout(() => map?.invalidateSize(), 350);
 
-  // ✅ start polling buses
+  // ✅ start polling in composable
   startLive();
-
-  // ✅ start polling terminals
-  startTerminalPolling();
 
   // ✅ run once now so markers appear immediately
   await fetchOnce();
   syncMarkersToBuses();
-
-  await loadTerminalsOnce();
-  syncTerminalMarkers();
 });
 
 onUnmounted(() => {
   stopLive();
-  stopTerminalPolling();
 
   if (geoWatchId !== null && navigator.geolocation) {
     navigator.geolocation.clearWatch(geoWatchId);
@@ -1196,37 +1063,6 @@ onUnmounted(() => {
 .tb-bus-close:active {
   transform: scale(0.92);
 }
-
-/* ✅ new route line pills */
-.tb-route-line{
-  display:flex;
-  gap:8px;
-  flex-wrap:wrap;
-  margin-bottom: 8px;
-}
-.tb-route-pill{
-  display:inline-flex;
-  align-items:center;
-  gap:6px;
-  padding:6px 10px;
-  border-radius:999px;
-  border:2px solid var(--border-light);
-  background: rgba(17,24,39,0.02);
-  font-weight:900;
-  font-size:12px;
-  color: var(--text-dark);
-}
-.tb-route-pill.ok{
-  border-color: rgba(22,101,52,0.25);
-  background: rgba(22,101,52,0.08);
-  color:#166534;
-}
-.tb-route-pill.warn{
-  border-color: rgba(180,83,9,0.25);
-  background: rgba(180,83,9,0.08);
-  color:#b45309;
-}
-
 .tb-bus-meta {
   font-size: 13px;
   font-weight: 800;
@@ -1290,172 +1126,6 @@ onUnmounted(() => {
 }
 .tb-mini-btn:active {
   transform: scale(0.98);
-}
-
-/* Bottom sheet */
-.tb-sheet {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 74%;
-  z-index: 30;
-  padding: 0 12px calc(12px + env(safe-area-inset-bottom));
-  will-change: transform;
-  pointer-events: auto;
-}
-.tb-sheet.dragging {
-  transition: none !important;
-}
-.tb-sheet-handle {
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(10px);
-  border: 2px solid var(--border-light);
-  border-radius: 18px;
-  padding: 10px 14px 12px;
-  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.12);
-  user-select: none;
-  touch-action: none;
-}
-.tb-sheet-pill {
-  width: 44px;
-  height: 5px;
-  border-radius: 999px;
-  background: rgba(31, 41, 55, 0.18);
-  margin: 0 auto 10px;
-}
-
-/* ... KEEP REST OF YOUR CSS SAME BELOW ... */
-
-/* Leaflet markers */
-.tb-leaflet-bus-icon {
-  background: transparent;
-  border: none;
-}
-.tb-leaflet-bus-pill {
-  width: 38px;
-  height: 38px;
-  border-radius: 999px;
-  background: #fff;
-  border: 2px solid var(--accent-teal);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.12);
-  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
-}
-.tb-leaflet-bus-pill i {
-  color: var(--accent-teal);
-  font-size: 18px;
-}
-.tb-leaflet-bus-pill.low {
-  border-color: #16a34a;
-}
-.tb-leaflet-bus-pill.low i {
-  color: #16a34a;
-}
-.tb-leaflet-bus-pill.mid {
-  border-color: #f59e0b;
-}
-.tb-leaflet-bus-pill.mid i {
-  color: #f59e0b;
-}
-.tb-leaflet-bus-pill.full {
-  border-color: #ef4444;
-}
-.tb-leaflet-bus-pill.full i {
-  color: #ef4444;
-}
-.tb-leaflet-bus-pill.selected {
-  transform: scale(1.12);
-  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.18);
-  position: relative;
-}
-.tb-leaflet-bus-pill.selected::after {
-  content: "";
-  position: absolute;
-  inset: -6px;
-  border-radius: 999px;
-  border: 2px solid currentColor;
-  opacity: 0.22;
-}
-.tb-leaflet-user-icon {
-  background: transparent;
-  border: none;
-}
-.tb-leaflet-user-dot {
-  width: 16px;
-  height: 16px;
-  border-radius: 999px;
-  background: var(--primary-blue);
-  border: 3px solid #fff;
-  box-shadow: 0 6px 16px rgba(30, 136, 229, 0.25);
-}
-
-/* ✅ terminal markers */
-.tb-leaflet-terminal-icon { background: transparent; border:none; }
-.tb-terminal-pill{
-  width:38px; height:38px;
-  border-radius:999px;
-  background:#fff;
-  border:2px solid rgba(30,136,229,0.65);
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  position:relative;
-  box-shadow: 0 10px 22px rgba(0,0,0,0.12);
-}
-.tb-terminal-pill i{
-  color: rgba(30,136,229,0.95);
-  font-size: 18px;
-}
-.tb-terminal-badge{
-  position:absolute;
-  top:-6px; right:-6px;
-  width:20px; height:20px;
-  border-radius:999px;
-  background: linear-gradient(135deg, rgba(0,188,212,0.92), rgba(30,136,229,0.92));
-  color:#fff;
-  font-weight:900;
-  font-size:11px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  border:2px solid #fff;
-}
-
-/* transitions */
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-.slide-up-enter-active,
-.slide-up-leave-active {
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.slide-up-enter-from,
-.slide-up-leave-to {
-  opacity: 0;
-  transform: translateY(10px);
-}
-.list-enter-active,
-.list-leave-active {
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.list-enter-from {
-  opacity: 0;
-  transform: translateY(10px);
-}
-.list-leave-to {
-  opacity: 0;
-  transform: translateY(-10px);
-}
-.list-move {
-  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Bottom sheet */

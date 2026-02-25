@@ -24,6 +24,8 @@ import TermsService from "../components/commuters/settings/TermsService.vue";
 import AdminLayout from "../layouts/AdminLayout.vue"
 import AdminDashboard from "../pages/admin/AdminDashboard.vue"
 import AdminBusesPage from "../pages/admin/AdminBusesPage.vue"
+import AdminNotificationPage from "../pages/admin/AdminNotificationPage.vue"
+import AdminLiveTrackPage from "../pages/admin/AdminLiveTrackPage.vue"
 import AdminTerminalPage from "../pages/admin/adminTerminalPage.vue"
 
 
@@ -72,7 +74,7 @@ const routes = [
       { path: "dashboard", component: AdminDashboard },
 
       // placeholders (create later)
-      { path: "live", component: AdminDashboard },
+      { path: "live", component: AdminLiveTrackPage },
  {
       path: "buses",
       component: AdminBusesPage,
@@ -83,13 +85,12 @@ const routes = [
           { path: "", redirect: "/admin/iot/devices" },
           { path: "devices", component: IoTDevices },
           { path: "assignments", component: IoTAssignments },
-          { path: "health", component: IoTHealth },
         ],
       },
 
 
       { path: "terminals", component: AdminTerminalPage },
-      { path: "alerts", component: AdminDashboard },
+      { path: "alerts", component: AdminNotificationPage },
       { path: "analytics", component: AdminDashboard },
       { path: "users", component: AdminDashboard },
       { path: "settings", component: AdminDashboard },

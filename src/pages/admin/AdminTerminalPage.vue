@@ -1,39 +1,83 @@
 <!-- src/pages/admin/TerminalPage.vue -->
 <template>
-  <div class="wrap">
-    <div class="panel">
-      <div class="panel-head">
-        <div>
-          <p class="title">Terminal List</p>
-          <p class="sub">Manage terminals, coordinates, status, and assigned buses.</p>
-
-          <p v-if="loading" class="sub">Loading terminals…</p>
-          <p v-else-if="error" class="sub" style="color:#ef4444;">{{ error }}</p>
-        </div>
-
-        <div class="head-actions">
-          <div class="search">
-            <i class="fas fa-search"></i>
-            <input
-              v-model="search"
-              class="search-input"
-              type="text"
-              placeholder="Search terminal name, city..."
-            />
-            <button v-if="search" class="search-clear" type="button" @click="search = ''">
-              <i class="fas fa-times"></i>
-            </button>
+  <div class="term-page">
+    <div class="term-shell">
+      <!-- Header -->
+      <div class="term-head">
+        <div class="term-head-left">
+          <div class="term-head-title">
+            <p class="term-title">Terminal List</p>
+            <p class="term-sub">Manage terminals, coordinates, status, and assigned buses.</p>
           </div>
 
-          <button class="btn primary" type="button" @click="openNew">
+          <div class="term-head-state">
+            <p v-if="loading" class="term-hint">
+              <i class="fas fa-circle-notch fa-spin"></i> Loading terminals…
+            </p>
+            <p v-else-if="error" class="term-hint term-hint-error">
+              <i class="fas fa-triangle-exclamation"></i> {{ error }}
+            </p>
+            <p v-else class="term-hint">
+              <i class="fas fa-clock"></i> Auto refresh: every 8s
+            </p>
+          </div>
+        </div>
+
+        <div class="term-head-right">
+          <button class="term-btn term-btn-ghost" type="button" @click="load" :disabled="loading">
+            <i class="fas fa-rotate"></i>
+            <span>{{ loading ? "Refreshing..." : "Refresh" }}</span>
+          </button>
+
+          <button class="term-btn term-btn-primary" type="button" @click="openNew">
             <i class="fas fa-plus"></i>
-            New Terminal
+            <span>New Terminal</span>
           </button>
         </div>
       </div>
 
-      <div class="table-wrap">
-        <table class="t">
+      <!-- Toolbar -->
+      <div class="term-toolbar">
+        <div class="term-search">
+          <i class="fas fa-search"></i>
+          <input
+            v-model="search"
+            type="text"
+            placeholder="Search terminal name, city, ID…"
+            @keyup.enter="load"
+          />
+          <button
+            v-if="search"
+            class="term-x"
+            type="button"
+            @click="search = ''"
+            aria-label="Clear search"
+          >
+            <i class="fas fa-xmark"></i>
+          </button>
+        </div>
+
+        <div class="term-tools">
+          <div class="term-kpis">
+            <div class="term-kpi">
+              <span class="term-kpi-label">Total</span>
+              <span class="term-kpi-val">{{ counts.total }}</span>
+            </div>
+            <div class="term-kpi">
+              <span class="term-kpi-label">Active</span>
+              <span class="term-kpi-val">{{ counts.active }}</span>
+            </div>
+            <div class="term-kpi">
+              <span class="term-kpi-label">Inactive</span>
+              <span class="term-kpi-val">{{ counts.inactive }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Table -->
+      <div class="term-table-wrap">
+        <table class="term-table">
           <thead>
             <tr>
               <th>Terminal</th>
@@ -41,59 +85,83 @@
               <th>Coordinates</th>
               <th>Buses</th>
               <th>Status</th>
-              <th class="right">Actions</th>
+              <th class="term-right">Actions</th>
             </tr>
           </thead>
 
           <tbody>
             <tr v-for="t in filteredRows" :key="t.terminal_id">
+              <!-- Terminal -->
               <td>
-                <div class="cell-main">
-                  <span class="cell-strong">{{ t.terminal_name }}</span>
-                  <div class="mini mono">ID {{ t.terminal_id }}</div>
+                <div class="term-maincell">
+                  <div class="term-badge">
+                    <i class="fas fa-map-location-dot"></i>
+                  </div>
+                  <div class="term-meta">
+                    <span class="term-strong">{{ t.terminal_name }}</span>
+                    <div class="term-mini term-mono">ID {{ t.terminal_id }}</div>
+                  </div>
                 </div>
               </td>
 
-              <td>{{ t.city }}</td>
+              <!-- City -->
+              <td class="term-strong">{{ t.city || "—" }}</td>
 
-              <td class="mono">
-                <div class="coord">
-                  <span class="coord-dot"></span>
+              <!-- Coordinates -->
+              <td class="term-mono">
+                <div class="term-coord">
+                  <span class="term-coord-dot"></span>
                   {{ fmtCoord(t.lat) }}, {{ fmtCoord(t.lng) }}
                 </div>
               </td>
 
+              <!-- Buses -->
               <td>
-                <span class="pill pill-blue">
+                <span class="term-pill term-pill-blue">
                   <i class="fas fa-bus"></i>
                   {{ Number(t.bus_count ?? 0) }}
                 </span>
-                <div class="mini" v-if="Number(t.bus_count ?? 0) === 0">No assigned buses</div>
+                <div class="term-mini" v-if="Number(t.bus_count ?? 0) === 0">
+                  No assigned buses
+                </div>
               </td>
 
+              <!-- Status -->
               <td>
-                <span class="pill" :class="activePill(t.is_active).cls">
+                <span class="term-pill" :class="activePill(t.is_active).cls">
                   <i class="fas" :class="activePill(t.is_active).ico"></i>
                   {{ activePill(t.is_active).text }}
                 </span>
               </td>
 
-              <td class="right">
-                <button class="btn ghost" type="button" @click="openEdit(t)">
-                  <i class="fas fa-pen"></i> Edit
+              <!-- Actions -->
+              <td class="term-right">
+                <button class="term-btn term-btn-ghost" type="button" @click="openEdit(t)">
+                  <i class="fas fa-pen"></i>
+                  <span>Edit</span>
                 </button>
-                <button class="btn ghost danger" type="button" @click="askDelete(t)">
-                  <i class="fas fa-trash"></i> Delete
+                <button class="term-btn term-btn-ghost term-btn-danger" type="button" @click="askDelete(t)">
+                  <i class="fas fa-trash"></i>
+                  <span>Delete</span>
                 </button>
               </td>
             </tr>
 
             <tr v-if="!loading && filteredRows.length === 0">
               <td colspan="6">
-                <div class="empty">
+                <div class="term-empty">
                   <i class="fas fa-map-location-dot"></i>
                   <p>No terminals found</p>
-                  <small>Add a terminal to get started.</small>
+                  <small>Try adjusting search, or add a terminal to get started.</small>
+
+                  <div class="term-empty-actions">
+                    <button class="term-btn term-btn-ghost" type="button" @click="search = ''">
+                      <i class="fas fa-xmark"></i> Clear search
+                    </button>
+                    <button class="term-btn term-btn-primary" type="button" @click="openNew">
+                      <i class="fas fa-plus"></i> New Terminal
+                    </button>
+                  </div>
                 </div>
               </td>
             </tr>
@@ -101,7 +169,8 @@
         </table>
       </div>
 
-      <div class="footnote">
+      <!-- Footnote -->
+      <div class="term-footnote">
         <i class="fas fa-circle-info"></i>
         Tip: Keep coordinates accurate. Track page uses terminals to infer route direction.
       </div>
@@ -153,7 +222,7 @@
                   placeholder="13.4100123"
                   :disabled="saving"
                 />
-                <div class="mini">Tip: Copy from Google Maps pin</div>
+                <div class="term-mini">Tip: Copy from Google Maps pin</div>
               </label>
 
               <label class="admin-field">
@@ -178,14 +247,14 @@
 
               <div class="admin-field hint">
                 <span>Preview</span>
-                <div class="preview">
-                  <div class="preview-row">
-                    <span class="pill" :class="activePill(form.is_active).cls">
+                <div class="term-preview">
+                  <div class="term-preview-row">
+                    <span class="term-pill" :class="activePill(form.is_active).cls">
                       <i class="fas" :class="activePill(form.is_active).ico"></i>
                       {{ activePill(form.is_active).text }}
                     </span>
                   </div>
-                  <div class="preview-row mono">
+                  <div class="term-preview-row term-mono">
                     {{ fmtCoord(form.lat) }}, {{ fmtCoord(form.lng) }}
                   </div>
                 </div>
@@ -225,10 +294,10 @@
           </div>
 
           <div class="admin-modal-body">
-            <p class="confirm-text">
+            <p class="term-confirm">
               Delete <b>{{ deleteTarget.terminal_name }}</b>?
             </p>
-            <p class="mini">
+            <p class="term-mini">
               Note: If buses are assigned to this terminal, you should re-assign them first.
             </p>
 
@@ -275,6 +344,16 @@ onBeforeUnmount(() => {
   if (poll) clearInterval(poll);
 });
 
+const counts = computed(() => {
+  const list = rows.value || [];
+  const isOn = (v) => Number(v) === 1;
+  return {
+    total: list.length,
+    active: list.filter((t) => isOn(t.is_active)).length,
+    inactive: list.filter((t) => !isOn(t.is_active)).length,
+  };
+});
+
 const filteredRows = computed(() => {
   const q = String(search.value || "").trim().toLowerCase();
   const list = rows.value || [];
@@ -295,8 +374,8 @@ function fmtCoord(v) {
 
 function activePill(v) {
   const on = Number(v) === 1;
-  if (on) return { text: "Active", cls: "pill-green", ico: "fa-circle-check" };
-  return { text: "Inactive", cls: "pill-red", ico: "fa-circle-xmark" };
+  if (on) return { text: "Active", cls: "term-pill-green", ico: "fa-circle-check" };
+  return { text: "Inactive", cls: "term-pill-red", ico: "fa-circle-xmark" };
 }
 
 /* ===== Modal ===== */
@@ -355,8 +434,8 @@ function validate() {
   const lat = Number(form.lat);
   const lng = Number(form.lng);
 
-  if (!Number.isFinite(lat) || lat < -90 || lat > 90) return "Latitude must be a valid number (-90 to 90).";
-  if (!Number.isFinite(lng) || lng < -180 || lng > 180) return "Longitude must be a valid number (-180 to 180).";
+  if (!Number.isFinite(lat) || lat < -90 || lat > 90) return "Latitude must be valid (-90 to 90).";
+  if (!Number.isFinite(lng) || lng < -180 || lng > 180) return "Longitude must be valid (-180 to 180).";
 
   return "";
 }
@@ -420,307 +499,3 @@ async function doDelete() {
   }
 }
 </script>
-
-<style scoped>
-.wrap{ display:block; }
-.panel{
-  background: var(--bg-white);
-  border: 2px solid var(--border-light);
-  border-radius: 18px;
-  padding: 14px;
-  box-shadow: 0 10px 22px rgba(0,0,0,0.04);
-}
-.panel-head{
-  display:flex;
-  align-items:flex-start;
-  justify-content:space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-.title{ margin:0; font-weight: 900; font-size: 14px; color: var(--text-dark); }
-.sub{ margin:6px 0 0; font-weight: 700; font-size: 12px; color: rgba(38,43,51,0.68); }
-
-.head-actions{
-  display:flex;
-  gap: 10px;
-  align-items:center;
-  flex-wrap: wrap;
-}
-
-.search{
-  position: relative;
-  display:flex;
-  align-items:center;
-  gap: 8px;
-  border: 2px solid var(--border-light);
-  background: #fff;
-  border-radius: 12px;
-  padding: 10px 12px;
-  min-width: 280px;
-}
-.search i{ color: rgba(38,43,51,0.55); }
-.search-input{
-  border:none;
-  outline:none;
-  width: 100%;
-  font-weight: 900;
-  font-size: 12px;
-  color: rgba(38,43,51,0.88);
-}
-.search-clear{
-  border:none;
-  background: transparent;
-  color: rgba(38,43,51,0.55);
-  width: 30px;
-  height: 30px;
-  border-radius: 10px;
-  cursor:pointer;
-}
-.search-clear:active{ transform: scale(.95); }
-
-.table-wrap{
-  border: 2px solid var(--border-light);
-  border-radius: 16px;
-  overflow:auto;
-  background: #fff;
-}
-.t{ width:100%; border-collapse: separate; border-spacing: 0; min-width: 980px; }
-.t thead th{
-  text-align:left;
-  font-size: 11px;
-  font-weight: 900;
-  letter-spacing:.4px;
-  text-transform: uppercase;
-  color: rgba(38,43,51,0.62);
-  padding: 12px;
-  border-bottom: 1px solid rgba(209,213,219,0.65);
-  background: rgba(245,247,250,0.7);
-}
-.t tbody td{
-  padding: 12px;
-  border-bottom: 1px solid rgba(229,231,235,0.8);
-  font-weight: 800;
-  color: rgba(38,43,51,0.88);
-  vertical-align: middle;
-}
-.t tbody tr:hover td{
-  background: rgba(0,188,212,0.04);
-}
-.right{ text-align:right; white-space: nowrap; }
-.mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-.cell-strong{ font-weight: 900; }
-
-.cell-main{ display:flex; flex-direction:column; gap: 2px; }
-.mini{
-  margin-top: 4px;
-  font-size: 11px;
-  font-weight: 800;
-  color: rgba(38,43,51,0.60);
-}
-
-.coord{
-  display:inline-flex;
-  align-items:center;
-  gap: 8px;
-}
-.coord-dot{
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: rgba(0,188,212,0.9);
-  box-shadow: 0 0 0 4px rgba(0,188,212,0.12);
-}
-
-.footnote{
-  margin-top: 12px;
-  display:flex;
-  align-items:center;
-  gap: 8px;
-  color: rgba(38,43,51,0.65);
-  font-weight: 800;
-  font-size: 12px;
-  padding: 10px 12px;
-  border: 2px solid var(--border-light);
-  border-radius: 16px;
-  background: rgba(255,255,255,0.7);
-}
-
-/* pills */
-.pill{
-  display:inline-flex;
-  align-items:center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 900;
-  border: 1px solid transparent;
-}
-.pill-green{ background: rgba(16,185,129,0.12); color: var(--success-green); border-color: rgba(16,185,129,0.25); }
-.pill-red{ background: rgba(239,68,68,0.12); color: var(--error-red); border-color: rgba(239,68,68,0.25); }
-.pill-blue{ background: rgba(30,136,229,0.10); color: rgba(30,136,229,0.95); border-color: rgba(30,136,229,0.22); }
-
-/* buttons */
-.btn{
-  border: 2px solid var(--border-light);
-  background: #fff;
-  border-radius: 12px;
-  padding: 10px 12px;
-  font-weight: 900;
-  cursor:pointer;
-  display:inline-flex;
-  align-items:center;
-  gap: 10px;
-  color: rgba(38,43,51,0.85);
-}
-.btn:hover{ border-color: rgba(0,188,212,0.35); background: rgba(0,188,212,0.06); }
-.btn:active{ transform: scale(.99); }
-.btn.primary{
-  border-color: rgba(30,136,229,0.18);
-  background: linear-gradient(135deg, rgba(30,136,229,0.92), rgba(0,188,212,0.72));
-  color:#fff;
-}
-.btn.primary:hover{ filter: brightness(1.02); }
-.btn.ghost{ padding: 8px 10px; border-radius: 10px; }
-.btn.danger:hover{ border-color: rgba(239,68,68,0.35); background: rgba(239,68,68,0.06); }
-
-/* empty */
-.empty{
-  padding: 18px 10px;
-  text-align:center;
-  color: rgba(38,43,51,0.68);
-}
-.empty i{ font-size: 32px; color: var(--border-medium); display:block; margin-bottom: 8px; }
-.empty p{ margin:0; font-weight: 900; }
-.empty small{ font-weight: 700; }
-
-/* ===== Modal styles ===== */
-.admin-modal-overlay{
-  position: fixed;
-  inset: 0;
-  background: rgba(17,24,39,0.35);
-  backdrop-filter: blur(8px);
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  padding: 16px;
-  z-index: 999;
-}
-.admin-modal{
-  width: min(720px, 100%);
-  background: #fff;
-  border: 2px solid var(--border-light);
-  border-radius: 18px;
-  box-shadow: 0 20px 55px rgba(0,0,0,0.18);
-  overflow:hidden;
-}
-.admin-modal-head{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  padding: 14px 14px;
-  border-bottom: 1px solid rgba(229,231,235,0.85);
-  background: rgba(245,247,250,0.65);
-}
-.admin-modal-title{
-  margin:0;
-  font-weight: 1000;
-  color: rgba(38,43,51,0.92);
-  display:flex;
-  align-items:center;
-  gap: 10px;
-}
-.admin-icon-btn{
-  width: 36px;
-  height: 36px;
-  border-radius: 12px;
-  border: 2px solid var(--border-light);
-  background: #fff;
-  cursor:pointer;
-}
-.admin-icon-btn:active{ transform: scale(.98); }
-
-.admin-modal-body{ padding: 14px; }
-.admin-form-grid{
-  display:grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-@media (max-width: 720px){
-  .admin-form-grid{ grid-template-columns: 1fr; }
-  .search{ min-width: 0; width: 100%; }
-}
-.admin-field{
-  display:flex;
-  flex-direction:column;
-  gap: 6px;
-}
-.admin-field > span{
-  font-size: 12px;
-  font-weight: 1000;
-  color: rgba(38,43,51,0.70);
-}
-.admin-input{
-  border: 2px solid var(--border-light);
-  border-radius: 12px;
-  padding: 10px 12px;
-  font-weight: 900;
-  outline:none;
-}
-.admin-input:focus{
-  border-color: rgba(0,188,212,0.35);
-  box-shadow: 0 0 0 4px rgba(0,188,212,0.10);
-}
-.admin-field.hint .preview{
-  border: 2px dashed rgba(209,213,219,0.8);
-  border-radius: 12px;
-  padding: 10px 12px;
-  background: rgba(245,247,250,0.55);
-}
-.preview-row{ margin-bottom: 8px; }
-.preview-row:last-child{ margin-bottom: 0; }
-
-.admin-err{
-  margin: 12px 0 0;
-  color: #ef4444;
-  font-weight: 900;
-  display:flex;
-  align-items:center;
-  gap: 8px;
-}
-
-.confirm-text{
-  margin: 0;
-  font-weight: 900;
-  color: rgba(38,43,51,0.90);
-}
-
-.admin-modal-foot{
-  display:flex;
-  align-items:center;
-  justify-content:flex-end;
-  gap: 10px;
-  padding: 12px 14px;
-  border-top: 1px solid rgba(229,231,235,0.85);
-  background: rgba(245,247,250,0.65);
-}
-.admin-btn{
-  border: 2px solid var(--border-light);
-  background: #fff;
-  border-radius: 12px;
-  padding: 10px 12px;
-  font-weight: 1000;
-  cursor:pointer;
-}
-.admin-btn.primary{
-  border-color: rgba(30,136,229,0.18);
-  background: linear-gradient(135deg, rgba(30,136,229,0.92), rgba(0,188,212,0.72));
-  color:#fff;
-}
-.admin-btn.danger{
-  border-color: rgba(239,68,68,0.20);
-  background: rgba(239,68,68,0.12);
-  color: rgba(239,68,68,0.95);
-}
-.admin-btn:disabled{ opacity: .65; cursor: not-allowed; }
-</style>
