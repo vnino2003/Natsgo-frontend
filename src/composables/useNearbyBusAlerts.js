@@ -29,7 +29,18 @@ function fmtTimeAgo(d) {
 }
 
 function safeJsonParse(s) {
-  try { return JSON.parse(s); } catch { return null; }
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+// small helper so we don't spam for tiny changes
+function roundKm(km, step = 0.1) {
+  const n = Number(km);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n / step) * step; // 0.1 km steps
 }
 
 export function useNearbyBusAlerts({
@@ -37,27 +48,39 @@ export function useNearbyBusAlerts({
   maxNearest = 4,
 
   // Notification behavior
-  nearKm = 1.0,         // bus must be <= this distance to create notif
-  cooldownMs = 5 * 60 * 1000, // per-bus notif cooldown
+  nearKm = 1.0, // bus must be <= this distance to create notif
+  cooldownMs = 2 * 60 * 1000, // ✅ default 2 mins now (change if you want)
+  distanceStepKm = 0.1, // significant distance change threshold for repeat notifs
 } = {}) {
   const { coords, hasLocation, status, startLocation } = useUserLocation();
   const { buses, start, stop, fetchOnce, loading, error } = useLiveBuses({ intervalMs });
 
-  // Notifications list
-  const notifications = ref([]);
-
-  // per-bus last notified timestamp (persisted)
-  const storageKey = "near_bus_notif_last";
-  const lastMap = ref(safeJsonParse(localStorage.getItem(storageKey)) || {}); // { [busId]: number }
-
-  function saveLastMap() {
-    localStorage.setItem(storageKey, JSON.stringify(lastMap.value));
+  // ✅ Persist notifications list
+  const notifKey = "near_bus_notifs_items";
+  const initialNotifs = safeJsonParse(localStorage.getItem(notifKey)) || [];
+  const notifications = ref(Array.isArray(initialNotifs) ? initialNotifs : []);
+  function saveNotifs() {
+    localStorage.setItem(notifKey, JSON.stringify(notifications.value));
   }
+
+  // ✅ Per-bus notification memory (persisted)
+  // We store:
+  // { [busId]: { lastAt, everNotified, lastKmBucket, lastSeats, lastCap } }
+  const storageKey = "near_bus_notif_state_v2";
+  const initialState = safeJsonParse(localStorage.getItem(storageKey)) || {};
+  const notifState = ref(initialState && typeof initialState === "object" ? initialState : {});
+  function saveNotifState() {
+    localStorage.setItem(storageKey, JSON.stringify(notifState.value));
+  }
+
+  // ✅ Unread count for bell badge
+  const unreadCount = computed(() =>
+    (notifications.value || []).reduce((acc, n) => acc + (n.read ? 0 : 1), 0)
+  );
 
   // Compute nearest buses
   const nearestBuses = computed(() => {
     if (!hasLocation.value || !coords.value) return [];
-
     const user = coords.value;
 
     const list = (buses.value || [])
@@ -75,56 +98,122 @@ export function useNearbyBusAlerts({
     return list.slice(0, maxNearest);
   });
 
-  // Generate notifications when near
+  function addNotif({ bus, title, msg, now }) {
+    const key = String(bus.id);
+    notifications.value.unshift({
+      id: `near-${key}-${now}`,
+      type: "bus",
+      title,
+      message: msg,
+      time: "Just now",
+      read: false,
+      meta: {
+        bus_id: bus.id,
+        km: bus.km,
+        lat: bus.lat,
+        lng: bus.lng,
+      },
+    });
+
+    // keep list small
+    if (notifications.value.length > 30) {
+      notifications.value = notifications.value.slice(0, 30);
+    }
+
+    saveNotifs();
+  }
+
+  // ✅ Recommended behavior:
+  // - first time: "Bus is near"
+  // - repeat (after cooldown): "Bus is still nearby"
+  // Repeat only if:
+  //   - still near
+  //   - cooldown passed
+  //   - AND (distance bucket changed OR seats changed OR capacity changed)
+  //     (this avoids spam if nothing changed at all)
   function maybeCreateNearBusNotifs(list) {
     const now = Date.now();
 
     for (const bus of list) {
       if (!(bus.km <= nearKm)) continue;
 
-      const key = String(bus.id);
-      const last = Number(lastMap.value[key] || 0);
+      const busId = String(bus.id);
+      if (!busId) continue;
 
-      // cooldown per bus
-      if (last && now - last < cooldownMs) continue;
+      const state = notifState.value[busId] || {
+        lastAt: 0,
+        everNotified: false,
+        lastKmBucket: null,
+        lastSeats: null,
+        lastCap: null,
+      };
 
-      lastMap.value[key] = now;
-      saveLastMap();
+      const kmBucket = roundKm(bus.km, distanceStepKm);
+      const seats = Number.isFinite(Number(bus.seats)) ? Number(bus.seats) : null;
+      const cap = Number.isFinite(Number(bus.capacity)) ? Number(bus.capacity) : null;
 
-      const title = `${bus.trackNo || bus.bus_code || "Bus"} is near`;
-      const msg = `${bus.kmText} away • ${bus.route || bus.plate_no || `Bus #${bus.id}`}`;
+      const cooldownPassed = !state.lastAt || now - state.lastAt >= cooldownMs;
 
-      notifications.value.unshift({
-        id: `near-${key}-${now}`,
-        type: "bus",
-        title,
-        message: msg,
-        time: "Just now",
-        read: false,
-        meta: {
-          bus_id: bus.id,
-          km: bus.km,
-          lat: bus.lat,
-          lng: bus.lng,
-        },
-      });
+      // detect meaningful change
+      const distChanged = kmBucket != null && state.lastKmBucket != null && kmBucket !== state.lastKmBucket;
+      const seatsChanged = seats != null && state.lastSeats != null && seats !== state.lastSeats;
+      const capChanged = cap != null && state.lastCap != null && cap !== state.lastCap;
+
+      // FIRST TIME notif (no cooldown needed)
+      if (!state.everNotified) {
+        const title = `${bus.trackNo || bus.bus_code || "Bus"} is near`;
+        const msg = `${bus.kmText} away • ${bus.route || bus.plate_no || `Bus #${bus.id}`}`;
+        addNotif({ bus, title, msg, now });
+
+        notifState.value[busId] = {
+          lastAt: now,
+          everNotified: true,
+          lastKmBucket: kmBucket,
+          lastSeats: seats,
+          lastCap: cap,
+        };
+        saveNotifState();
+        continue;
+      }
+
+      // REPEAT notif only after cooldown and when something changed
+      if (cooldownPassed && (distChanged || seatsChanged || capChanged)) {
+        const title = `${bus.trackNo || bus.bus_code || "Bus"} is still nearby`;
+        const msg = `${bus.kmText} away • ${bus.route || bus.plate_no || `Bus #${bus.id}`}`;
+        addNotif({ bus, title, msg, now });
+
+        notifState.value[busId] = {
+          ...state,
+          lastAt: now,
+          lastKmBucket: kmBucket,
+          lastSeats: seats,
+          lastCap: cap,
+        };
+        saveNotifState();
+      } else {
+        // update stored snapshot silently (so next time we can detect change)
+        notifState.value[busId] = {
+          ...state,
+          lastKmBucket: kmBucket,
+          lastSeats: seats,
+          lastCap: cap,
+        };
+        // no need to save each loop heavily, but okay — we’ll save once after loop
+      }
     }
 
-    // keep list small
-    if (notifications.value.length > 30) {
-      notifications.value = notifications.value.slice(0, 30);
-    }
+    saveNotifState();
   }
 
   // Update time labels every refresh tick
   function refreshTimes() {
     notifications.value = notifications.value.map((n) => {
-      // try parse timestamp from id
       const t = String(n.id).split("-").pop();
       const ms = Number(t);
       if (!Number.isFinite(ms)) return n;
       return { ...n, time: fmtTimeAgo(new Date(ms)) };
     });
+    saveNotifs();
   }
 
   watch(
@@ -143,14 +232,28 @@ export function useNearbyBusAlerts({
 
   function markAllRead() {
     notifications.value = notifications.value.map((n) => ({ ...n, read: true }));
+    saveNotifs();
+  }
+
+  function markRead(id) {
+    notifications.value = notifications.value.map((n) =>
+      n.id === id ? { ...n, read: true } : n
+    );
+    saveNotifs();
   }
 
   function dismiss(id) {
     notifications.value = notifications.value.filter((n) => n.id !== id);
+    saveNotifs();
   }
 
   function clear() {
     notifications.value = [];
+    saveNotifs();
+
+    // optional: also reset per-bus state to allow "first time" again
+    notifState.value = {};
+    saveNotifState();
   }
 
   // Start/Stop live buses only when location is ON
@@ -179,6 +282,8 @@ export function useNearbyBusAlerts({
 
     // notifications
     notifications,
+    unreadCount,
+    markRead,
     markAllRead,
     dismiss,
     clear,

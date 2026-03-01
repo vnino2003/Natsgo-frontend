@@ -1,4 +1,4 @@
-// src/composables/useLiveBuses.js
+// src/composables/useLiveBuses.js (UPDATED: includes terminal state + direction labels)
 import { ref, onUnmounted } from "vue";
 import { getLiveBuses } from "../services/api/commuterTrackingService";
 
@@ -19,8 +19,12 @@ export function useLiveBuses({ intervalMs = 1000 } = {}) {
 
   function isBusOk(row) {
     const s = String(row?.bus_status || "active").toLowerCase();
-    // adjust based on your actual values
     return ["active", "online", "in_service"].includes(s);
+  }
+
+  function cleanName(v) {
+    const s = String(v ?? "").trim();
+    return s || null;
   }
 
   function normalize(row) {
@@ -32,6 +36,29 @@ export function useLiveBuses({ intervalMs = 1000 } = {}) {
       : row.plate_no || `Bus #${row.bus_id}`;
 
     const trackNo = row.bus_code || String(row.bus_id);
+
+    const currentTerminalId = row.current_terminal_id != null ? Number(row.current_terminal_id) : null;
+    const targetTerminalId = row.target_terminal_id != null ? Number(row.target_terminal_id) : null;
+
+    const currentTerminalName = cleanName(row.current_terminal_name);
+    const targetTerminalName = cleanName(row.target_terminal_name);
+
+    const atTerminal = Number(row.at_terminal ?? 0) === 1;
+    const distM = row.dist_m != null ? Number(row.dist_m) : null;
+
+    // ✅ direction label for UI
+    const directionLabel =
+      currentTerminalName && targetTerminalName
+        ? `${currentTerminalName} → ${targetTerminalName}`
+        : currentTerminalName
+          ? `${currentTerminalName} → (unknown)`
+          : targetTerminalName
+            ? `(unknown) → ${targetTerminalName}`
+            : "Route: unknown";
+
+    const terminalStateLabel = atTerminal
+      ? (currentTerminalName ? `At ${currentTerminalName}` : "At terminal")
+      : (currentTerminalName && targetTerminalName ? `On route: ${currentTerminalName} → ${targetTerminalName}` : "On route");
 
     return {
       id: row.bus_id,
@@ -57,6 +84,7 @@ export function useLiveBuses({ intervalMs = 1000 } = {}) {
       device_status: row.device_status,
       gps_state: row.gps_state,
       last_seen_at: row.last_seen_at,
+      is_online: Number(row.is_online ?? 0) === 1,
 
       lat: Number(row.lat),
       lng: Number(row.lng),
@@ -65,6 +93,16 @@ export function useLiveBuses({ intervalMs = 1000 } = {}) {
       hdop: row.hdop != null ? Number(row.hdop) : null,
       sats: row.satellites != null ? Number(row.satellites) : null,
       updatedAt: row.updated_at ?? null,
+
+      // ✅ terminal state (NEW)
+      currentTerminalId,
+      targetTerminalId,
+      currentTerminalName,
+      targetTerminalName,
+      atTerminal,
+      distM,
+      directionLabel,
+      terminalStateLabel,
     };
   }
 
@@ -78,7 +116,6 @@ export function useLiveBuses({ intervalMs = 1000 } = {}) {
 
       buses.value = list
         .filter((x) => x && x.bus_id && x.lat != null && x.lng != null)
-        // ✅ HARD FILTER: show only if GPS active + bus ok + device ok
         .filter((x) => isGpsActive(x) && isDeviceOk(x) && isBusOk(x))
         .map(normalize);
     } catch (e) {

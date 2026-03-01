@@ -28,14 +28,13 @@ export function useAdminLiveBuses({ intervalMs = 2000 } = {}) {
   const buses = ref([]);
   const loading = ref(false);
   const error = ref(null);
-
   let timer = null;
 
   function normalize(r) {
     const lat = safeNum(r.lat);
     const lng = safeNum(r.lng);
 
-    // ✅ use backend status if present, else fallback compute
+    // ✅ backend gives status already, fallback compute
     const status =
       r.status ||
       (Number(r.is_online) === 1
@@ -44,31 +43,54 @@ export function useAdminLiveBuses({ intervalMs = 2000 } = {}) {
           : "Online"
         : "Offline");
 
+    const ts = r.terminal_state || {};
+    const route =
+      r.route_label ||
+      (ts.current_terminal_name || ts.target_terminal_name
+        ? `${ts.current_terminal_name || "—"} → ${ts.target_terminal_name || "—"}`
+        : "Unknown route");
+
+    const capacity = Number(r.capacity ?? 0);
+    const passengerCount = Number(r.passenger_count ?? 0);
+    const occPct = capacity > 0 ? Math.round((passengerCount / capacity) * 100) : null;
+
     return {
-      id: r.bus_id,              // page expects b.id
+      // IDs
+      id: r.bus_id,
       deviceId: r.device_id,
 
+      // Display
       code: r.bus_code || "—",
       plate: r.plate_no || "—",
-      route: r.bus_status || "—",
+      route,
 
-      capacity: Number(r.capacity ?? 0),
-      passengerCount: Number(r.passenger_count ?? 0),
+      // Occupancy
+      capacity,
+      passengerCount,
+      occPct: occPct != null ? Math.max(0, Math.min(100, occPct)) : null,
 
+      // GPS
       lat,
       lng,
-      speed: r.speed_kmh != null ? Number(r.speed_kmh) : 0,
+      speed: r.speed_kmh != null ? Math.max(0, Math.round(Number(r.speed_kmh))) : 0,
 
+      // Status
       status,
-
       gpsBadge: r.gps_badge || "GPS —",
       gpsState: r.gps_state || "searching",
 
-      signal: r.device_status ? String(r.device_status) : "—",
+      // Signal (prefer device_status)
+      signal: r.device_status ? String(r.device_status) : (r.device_code || "—"),
 
+      // Timing
       lastSeen: formatTimeAgo(r.last_seen_at),
       updatedAt: r.updated_at,
 
+      // Terminal state
+      terminalAt: Number(ts.at_terminal) === 1,
+      distM: ts.dist_m != null ? Number(ts.dist_m) : null,
+
+      // raw payload
       raw: r,
     };
   }
@@ -80,9 +102,6 @@ export function useAdminLiveBuses({ intervalMs = 2000 } = {}) {
 
       const res = await getAdminLiveBuses();
       const list = Array.isArray(res.data) ? res.data : [];
-
-      // ✅ IMPORTANT: don't filter out all records accidentally
-      // We'll keep them, but map markers will only be created if lat/lng valid.
       buses.value = list.map(normalize);
     } catch (e) {
       error.value =
@@ -97,7 +116,7 @@ export function useAdminLiveBuses({ intervalMs = 2000 } = {}) {
 
   function start() {
     stop();
-    fetchOnce(); // ✅ fetch immediately
+    fetchOnce();
     timer = setInterval(fetchOnce, intervalMs);
   }
 

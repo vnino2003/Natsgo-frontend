@@ -7,6 +7,7 @@ import TrackBusPage from "../pages/commuters/TrackBusPage.vue";
 import SettingsPage from "../pages/commuters/SettingsPage.vue";
 import RoutesPage from "../pages/commuters/RoutesPage.vue";
 import TerminalPage from "../pages/commuters/TerminalPage.vue";
+import TerminalDetailsPage from "../pages/commuters/TerminalDetailsPage.vue";
 
 // settings components (commuters)
 import SettingsHome from "../components/commuters/settings/SettingsHome.vue";
@@ -27,6 +28,8 @@ import AdminBusesPage from "../pages/admin/AdminBusesPage.vue"
 import AdminNotificationPage from "../pages/admin/AdminNotificationPage.vue"
 import AdminLiveTrackPage from "../pages/admin/AdminLiveTrackPage.vue"
 import AdminTerminalPage from "../pages/admin/adminTerminalPage.vue"
+import AdminRoutesPage from "../pages/admin/AdminRoutesPage.vue"
+import AdminAnalyticsPage from "../pages/admin/AdminAnalyticsPage.vue"
 
 
 // ✅ Admin - IoT pages (create these files)
@@ -45,6 +48,7 @@ const routes = [
       { path: "track-bus", name: "track", component: TrackBusPage },
       { path: "routes", name: "routes", component: RoutesPage },
       { path: "terminal", name: "terminal", component: TerminalPage },
+      { path: "terminal-details", name: "terminalDetails", component: TerminalDetailsPage },
       {
         path: "settings",
         component: SettingsPage,
@@ -91,7 +95,8 @@ const routes = [
 
       { path: "terminals", component: AdminTerminalPage },
       { path: "alerts", component: AdminNotificationPage },
-      { path: "analytics", component: AdminDashboard },
+      { path: "routes", component: AdminRoutesPage },
+      { path: "analytics", component: AdminAnalyticsPage },
       { path: "users", component: AdminDashboard },
       { path: "settings", component: AdminDashboard },
     ],

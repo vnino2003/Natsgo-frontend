@@ -1,3 +1,4 @@
+<!-- src/pages/admin/LiveTrackingPage.vue (FULL UPDATED: terminal range circle on click) -->
 <template>
   <div class="lt-page">
     <!-- Header -->
@@ -25,7 +26,7 @@
       <div class="lt-stat lt-stat--all">
         <div class="lt-stat__meta">
           <div class="lt-stat__label">All Buses</div>
-          <div class="lt-stat__value">{{ buses.length }}</div>
+          <div class="lt-stat__value">{{ uiBuses.length }}</div>
         </div>
         <div class="lt-stat__icon lt-stat__icon--blue"><i class="fas fa-bus"></i></div>
         <div class="lt-stat__bar lt-bar--blue"></div>
@@ -69,6 +70,7 @@
       </button>
     </div>
 
+    <!-- TRACKING VIEW -->
     <div class="lt-grid" v-if="view === 'tracking'">
       <!-- Map -->
       <section class="lt-card lt-map">
@@ -89,50 +91,100 @@
             <div class="lt-legend__item"><span class="lt-dot ok"></span><span>Online</span></div>
             <div class="lt-legend__item"><span class="lt-dot warn"></span><span>Warning</span></div>
             <div class="lt-legend__item"><span class="lt-dot bad"></span><span>Offline</span></div>
+
+            <div class="lt-legend__sep"></div>
+            <div class="lt-legend__item"><span class="lt-dot term"></span><span>Terminal</span></div>
+            <div class="lt-legend__item">
+              <span class="lt-dot range"></span><span>Terminal range ({{ TERMINAL_RANGE_M }}m)</span>
+            </div>
           </div>
         </div>
       </section>
 
-      <!-- Panel -->
+      <!-- Right Panel -->
       <aside class="lt-card lt-panel">
         <div class="lt-card__head lt-panel__head">
           <div class="lt-panel__title">
-            <i class="fas fa-satellite-dish"></i>
-            <span>Tracked Buses</span>
-            <span class="lt-badge">{{ filtered.length }}</span>
+            <i class="fas" :class="panelView === 'buses' ? 'fa-satellite-dish' : 'fa-map-location-dot'"></i>
+            <span>{{ panelView === "buses" ? "Tracked Buses" : "Terminals" }}</span>
+
+            <span class="lt-badge" v-if="panelView === 'buses'">{{ filteredBuses.length }}</span>
+            <span class="lt-badge" v-else>{{ filteredTerminals.length }}</span>
+          </div>
+
+          <div class="lt-panel-switch">
+            <button class="lt-switch" :class="{ on: panelView === 'buses' }" type="button" @click="panelView = 'buses'">
+              <i class="fas fa-bus"></i><span>Buses</span>
+            </button>
+
+            <button
+              class="lt-switch"
+              :class="{ on: panelView === 'terminals' }"
+              type="button"
+              @click="panelView = 'terminals'"
+            >
+              <i class="fas fa-map-location-dot"></i><span>Terminals</span>
+            </button>
           </div>
         </div>
 
         <div class="lt-panel__tools">
           <div class="lt-search">
             <i class="fas fa-search"></i>
-            <input v-model="q" type="text" placeholder="Search bus..." />
-            <button v-if="q" class="lt-search__clear" type="button" @click="q = ''" aria-label="Clear">
+
+            <input v-if="panelView === 'buses'" v-model="q" type="text" placeholder="Search bus..." />
+            <input v-else v-model="tq" type="text" placeholder="Search terminal..." />
+
+            <button
+              v-if="panelView === 'buses' ? q : tq"
+              class="lt-search__clear"
+              type="button"
+              @click="panelView === 'buses' ? (q = '') : (tq = '')"
+              aria-label="Clear"
+            >
               <i class="fas fa-xmark"></i>
             </button>
           </div>
 
-          <div class="lt-filters">
+          <div class="lt-filters" v-if="panelView === 'buses'">
             <button class="lt-pill" :class="{ on: filter === 'all' }" type="button" @click="filter = 'all'">All</button>
             <button class="lt-pill" :class="{ on: filter === 'online' }" type="button" @click="filter = 'online'">Online</button>
             <button class="lt-pill" :class="{ on: filter === 'warning' }" type="button" @click="filter = 'warning'">Warning</button>
             <button class="lt-pill" :class="{ on: filter === 'offline' }" type="button" @click="filter = 'offline'">Offline</button>
           </div>
+
+          <div class="lt-term-hint" v-else>
+            <i class="fas fa-circle-info"></i>
+            Click a terminal to focus it and show its range.
+          </div>
         </div>
 
-        <div class="lt-list">
+        <!-- Bus list -->
+        <div class="lt-list" v-if="panelView === 'buses'">
           <button
-            v-for="b in filtered"
+            v-for="b in filteredBuses"
             :key="b.id"
             class="lt-item"
-            :class="{ on: selected?.id === b.id }"
+            :class="{ on: selectedBus?.id === b.id }"
             type="button"
             @click="selectBus(b)"
           >
             <div class="lt-item__top">
               <div class="lt-item__left">
                 <div class="lt-item__code">{{ b.code }}</div>
-                <div class="lt-item__route">{{ b.plate }} • {{ b.route }}</div>
+
+                <div class="lt-item__route">
+                  {{ b.plate || "—" }}
+                  <span class="lt-sep">•</span>
+                  <span>{{ b.route || "Unknown route" }}</span>
+
+                  <span class="lt-sep">•</span>
+                  <span class="lt-occ">
+                    <i class="fas fa-users"></i>
+                    {{ b.passengerCount }} / {{ b.capacity || "—" }}
+                    <span v-if="b.occPct != null">({{ b.occPct }}%)</span>
+                  </span>
+                </div>
               </div>
 
               <div class="lt-item__right">
@@ -155,6 +207,12 @@
               </span>
               <span class="lt-sep">•</span>
               <span class="lt-meta">
+                <i class="fas fa-road"></i>
+                {{ b.terminalAt ? "at terminal" : "on road" }}
+                <span v-if="b.distM != null"> • {{ Math.round(b.distM) }}m</span>
+              </span>
+              <span class="lt-sep">•</span>
+              <span class="lt-meta">
                 <i class="fas fa-signal"></i>
                 {{ b.signal }}
               </span>
@@ -163,8 +221,6 @@
                 <i class="fas fa-clock"></i>
                 {{ b.lastSeen }}
               </span>
-
-              <!-- ✅ GPS badge from iot_devices.gps_state -->
               <span class="lt-sep">•</span>
               <span class="lt-meta">
                 <i class="fas fa-satellite"></i>
@@ -172,11 +228,75 @@
               </span>
             </div>
           </button>
+
+          <div v-if="!filteredBuses.length" class="lt-empty-mini">
+            <i class="fas fa-bus"></i>
+            <p>No buses found</p>
+            <small>Try another keyword or filter.</small>
+          </div>
+        </div>
+
+        <!-- Terminal list -->
+        <div class="lt-list" v-else>
+          <button
+            v-for="t in filteredTerminals"
+            :key="t.terminal_id"
+            class="lt-term-item"
+            :class="{ on: selectedTerminal?.terminal_id === t.terminal_id }"
+            type="button"
+            @click="selectTerminal(t)"
+          >
+            <div class="lt-term-top">
+              <div class="lt-term-left">
+                <div class="lt-term-badge"><i class="fas fa-map-location-dot"></i></div>
+                <div class="lt-term-meta">
+                  <div class="lt-term-title">
+                    <span class="lt-term-name">{{ t.terminal_name || "Terminal" }}</span>
+                    <span class="lt-term-id">ID {{ t.terminal_id }}</span>
+                  </div>
+                  <div class="lt-term-sub">
+                    <i class="fas fa-city"></i>
+                    <span>{{ t.city || "—" }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="lt-term-right">
+                <span class="lt-term-pill">
+                  <i class="fas fa-bus"></i>
+                  {{ Number(t.bus_count ?? 0) }}
+                </span>
+              </div>
+            </div>
+
+            <div class="lt-term-bottom">
+              <span class="lt-meta">
+                <i class="fas fa-location-crosshairs"></i>
+                {{ safeFixed(t.lat) }}, {{ safeFixed(t.lng) }}
+              </span>
+              <span class="lt-sep">•</span>
+              <span class="lt-meta">
+                <i class="fas fa-bullseye"></i>
+                {{ TERMINAL_RANGE_M }}m range
+              </span>
+              <span class="lt-sep">•</span>
+              <span class="lt-meta">
+                <i class="fas fa-clock"></i>
+                {{ fmtTime(t.available_from) }} – {{ fmtTime(t.available_to) }}
+              </span>
+            </div>
+          </button>
+
+          <div v-if="!filteredTerminals.length" class="lt-empty-mini">
+            <i class="fas fa-map-location-dot"></i>
+            <p>No terminals found</p>
+            <small>Try another keyword.</small>
+          </div>
         </div>
       </aside>
     </div>
 
-    <!-- Analytics -->
+    <!-- ANALYTICS VIEW -->
     <div v-else class="lt-analytics">
       <div class="lt-card lt-ana-card">
         <div class="lt-card__head">
@@ -189,31 +309,78 @@
       </div>
     </div>
 
-    <!-- Floating details -->
-    <div v-if="selected" class="lt-float">
+    <!-- Floating details: Bus -->
+    <div v-if="selectedBus" class="lt-float">
       <div class="lt-float__left">
         <div class="lt-float__title">
           <i class="fas fa-bus"></i>
-          <span>{{ selected.code }}</span>
+          <span>{{ selectedBus.code }}</span>
 
-          <span class="lt-status" :class="statusClass(selected.status)">
-            <i class="fas" :class="statusIcon(selected.status)"></i>
-            {{ selected.status }}
+          <span class="lt-status" :class="statusClass(selectedBus.status)">
+            <i class="fas" :class="statusIcon(selectedBus.status)"></i>
+            {{ selectedBus.status }}
           </span>
 
-          <!-- ✅ gps badge color based on gpsState -->
-          <span class="lt-mini-badge" :class="gpsBadgeClass(selected.gpsState)">
-            {{ selected.gpsBadge }}
+          <span class="lt-mini-badge" :class="gpsBadgeClass(selectedBus.gpsState)">
+            {{ selectedBus.gpsBadge }}
           </span>
         </div>
+
         <div class="lt-float__sub">
-          {{ selected.plate }} • {{ selected.route }}
-          <span v-if="selected.driver"> • <span class="muted">Driver:</span> {{ selected.driver }}</span>
+          {{ selectedBus.plate }} • {{ selectedBus.route || "Unknown route" }}
+          <span class="lt-sep">•</span>
+          <span class="muted">
+            <i class="fas fa-users"></i>
+            {{ selectedBus.passengerCount }} / {{ selectedBus.capacity || "—" }}
+            <span v-if="selectedBus.occPct != null">({{ selectedBus.occPct }}%)</span>
+          </span>
+          <span class="lt-sep">•</span>
+          <span class="muted">
+            {{ selectedBus.terminalAt ? "at terminal" : "on road" }}
+            <span v-if="selectedBus.distM != null"> • {{ Math.round(selectedBus.distM) }}m</span>
+          </span>
         </div>
       </div>
 
       <div class="lt-float__right">
-        <button class="lt-btn lt-btn--soft lt-btn--sm" type="button" @click="centerOnSelected">
+        <button class="lt-btn lt-btn--soft lt-btn--sm" type="button" @click="centerOnSelectedBus">
+          <i class="fas fa-crosshairs"></i><span>Center</span>
+        </button>
+        <button class="lt-btn lt-btn--danger lt-btn--sm" type="button" @click="clearSelected">
+          <i class="fas fa-xmark"></i><span>Close</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Floating details: Terminal -->
+    <div v-if="selectedTerminal" class="lt-float lt-float--term">
+      <div class="lt-float__left">
+        <div class="lt-float__title">
+          <i class="fas fa-map-location-dot"></i>
+          <span>{{ selectedTerminal.terminal_name || "Terminal" }}</span>
+
+          <span class="lt-mini-badge lt-mini-badge--term">
+            <i class="fas fa-bus"></i>
+            {{ Number(selectedTerminal.bus_count ?? 0) }}
+          </span>
+        </div>
+
+        <div class="lt-float__sub">
+          {{ selectedTerminal.city || "—" }}
+          <span class="lt-sep">•</span>
+          <span class="muted">{{ safeFixed(selectedTerminal.lat) }}, {{ safeFixed(selectedTerminal.lng) }}</span>
+          <span class="lt-sep">•</span>
+          <span class="muted">{{ fmtTime(selectedTerminal.available_from) }} – {{ fmtTime(selectedTerminal.available_to) }}</span>
+          <span class="lt-sep">•</span>
+          <span class="muted">
+            <i class="fas fa-bullseye"></i>
+            Range: {{ TERMINAL_RANGE_M }}m (inside terminal)
+          </span>
+        </div>
+      </div>
+
+      <div class="lt-float__right">
+        <button class="lt-btn lt-btn--soft lt-btn--sm" type="button" @click="centerOnSelectedTerminal">
           <i class="fas fa-crosshairs"></i><span>Center</span>
         </button>
         <button class="lt-btn lt-btn--danger lt-btn--sm" type="button" @click="clearSelected">
@@ -230,28 +397,108 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+
 import { useAdminLiveBuses } from "@/composables/useAdminLiveBuses";
+import { useTerminals } from "@/composables/useTerminal"; // keep your path as-is
 
 const view = ref("tracking");
+
+/* right panel switch */
+const panelView = ref("buses"); // "buses" | "terminals"
+
+/* buses */
 const q = ref("");
 const filter = ref("all");
-const selected = ref(null);
+const selectedBus = ref(null);
+
+/* terminals */
+const tq = ref("");
+const selectedTerminal = ref(null);
 
 const mapEl = ref(null);
 let map = null;
 let myMarker = null;
-const busMarkers = new Map();
+
+/* markers */
+const busMarkers = new Map(); // busId -> marker
+const terminalMarkers = new Map(); // terminalId -> marker
 
 const FALLBACK = { lat: 12.8797, lng: 121.774 };
+
+/* =========================
+   ✅ Terminal range settings
+   - match your backend arrival_m default (120m)
+========================= */
+const TERMINAL_RANGE_M = 120;
+
+// circle overlay for selected terminal
+let terminalRangeCircle = null;
+
+function clearTerminalRangeCircle() {
+  if (terminalRangeCircle && map) {
+    map.removeLayer(terminalRangeCircle);
+  }
+  terminalRangeCircle = null;
+}
+
+function drawTerminalRangeCircle(t) {
+  if (!map || !t) return;
+
+  const lat = Number(t.lat);
+  const lng = Number(t.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+  // remove old
+  clearTerminalRangeCircle();
+
+  // ✅ draw circle around terminal (radius meters)
+  terminalRangeCircle = L.circle([lat, lng], {
+    radius: TERMINAL_RANGE_M,
+    weight: 2,
+    opacity: 0.9,
+    fillOpacity: 0.12,
+  }).addTo(map);
+}
+
+/* ===== buses polling ===== */
 const { buses, start, stop, fetchOnce } = useAdminLiveBuses({ intervalMs: 2000 });
 
-const filtered = computed(() => {
+/* ✅ NOW buses are already in UI shape */
+const uiBuses = computed(() => buses.value || []);
+
+/* ===== terminals polling ===== */
+const { rows: terminals, fetchTerminals } = useTerminals();
+let terminalPoll = null;
+
+async function loadTerminalsOnce() {
+  await fetchTerminals({ q: "" });
+  await nextTick();
+  syncTerminalMarkers();
+}
+
+/* =========================
+   Computed lists (use uiBuses)
+========================= */
+const filteredBuses = computed(() => {
   const keyword = q.value.trim().toLowerCase();
 
-  return buses.value
+  return uiBuses.value
     .filter((b) => {
       if (!keyword) return true;
-      const hay = [b.code, b.plate, b.route, b.driver, b.status, b.gpsBadge].join(" ").toLowerCase();
+      const hay = [
+        b.code,
+        b.plate,
+        b.route,
+        b.status,
+        b.gpsBadge,
+        b.signal,
+        b.passengerCount,
+        b.capacity,
+        b.occPct,
+        b.terminalAt ? "terminal" : "road",
+      ]
+        .join(" ")
+        .toLowerCase();
       return hay.includes(keyword);
     })
     .filter((b) => {
@@ -263,24 +510,57 @@ const filtered = computed(() => {
     });
 });
 
+const filteredTerminals = computed(() => {
+  const keyword = tq.value.trim().toLowerCase();
+  const list = terminals.value || [];
+
+  return list.filter((t) => {
+    if (!keyword) return true;
+    const hay = [t.terminal_name, t.city, t.terminal_id].join(" ").toLowerCase();
+    return hay.includes(keyword);
+  });
+});
+
+/* =========================
+   Utils
+========================= */
 function safeFixed(v) {
   const n = Number(v);
   if (!Number.isFinite(n)) return "—";
   return n.toFixed(5);
 }
-
+function fmtTime(v) {
+  const s = String(v || "");
+  if (!s) return "—";
+  return s.slice(0, 5);
+}
 function countBy(status) {
-  return buses.value.filter((b) => b.status === status).length;
+  return uiBuses.value.filter((b) => b.status === status).length;
+}
+
+function clearSelected() {
+  selectedBus.value = null;
+  selectedTerminal.value = null;
+  clearTerminalRangeCircle(); // ✅ remove range ring
+  refreshAllMarkerIcons();
 }
 
 function selectBus(b) {
-  selected.value = b;
+  selectedTerminal.value = null;
+  clearTerminalRangeCircle(); // ✅ remove terminal ring when selecting bus
+  selectedBus.value = b;
+  panelView.value = "buses";
   refreshAllMarkerIcons();
-  centerOnSelected();
+  centerOnSelectedBus();
 }
-function clearSelected() {
-  selected.value = null;
+
+function selectTerminal(t) {
+  selectedBus.value = null;
+  selectedTerminal.value = t;
+  panelView.value = "terminals";
   refreshAllMarkerIcons();
+  drawTerminalRangeCircle(t); // ✅ show range ring
+  centerOnSelectedTerminal();
 }
 
 function statusClass(status) {
@@ -304,7 +584,9 @@ function gpsBadgeClass(gpsState) {
   return "warn";
 }
 
-/* Leaflet icons */
+/* =========================
+   Leaflet icons
+========================= */
 function makeBusDivIcon(bus, isSelected = false) {
   const st = statusClass(bus.status);
   const sel = isSelected ? "selected" : "";
@@ -319,6 +601,34 @@ function makeBusDivIcon(bus, isSelected = false) {
     iconAnchor: [19, 19],
   });
 }
+
+/* ✅ Terminal icon marker */
+function makeTerminalDivIcon(isSelected = false) {
+  const sel = isSelected ? "selected" : "";
+  return L.divIcon({
+    className: "lt-leaflet-term-icon",
+    html: `
+      <button class="lt-term-marker ${sel}" type="button" aria-label="terminal">
+        <span class="lt-term-ring"></span>
+
+        <span class="lt-term-sign">
+          <i class="fas fa-building"></i>
+        </span>
+
+        <span class="lt-term-base">
+          <span class="lt-term-door"></span>
+          <span class="lt-term-window w1"></span>
+          <span class="lt-term-window w2"></span>
+        </span>
+
+        <span class="lt-term-shadow"></span>
+      </button>
+    `,
+    iconSize: [44, 44],
+    iconAnchor: [22, 36],
+  });
+}
+
 function makeMyDivIcon() {
   return L.divIcon({
     className: "lt-leaflet-me-icon",
@@ -328,16 +638,23 @@ function makeMyDivIcon() {
   });
 }
 
+/* =========================
+   Leaflet init + sync
+========================= */
 function initLeaflet() {
   if (!mapEl.value || map) return;
 
-  map = L.map(mapEl.value, { zoomControl: false, attributionControl: false, tap: true })
-    .setView([FALLBACK.lat, FALLBACK.lng], 6);
+  map = L.map(mapEl.value, { zoomControl: false, attributionControl: false, tap: true }).setView(
+    [FALLBACK.lat, FALLBACK.lng],
+    6
+  );
 
   L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", { maxZoom: 20 }).addTo(map);
 
   map.on("click", () => {
-    selected.value = null;
+    selectedBus.value = null;
+    selectedTerminal.value = null;
+    clearTerminalRangeCircle(); // ✅ hide range when clicking empty map
     refreshAllMarkerIcons();
   });
 
@@ -345,6 +662,7 @@ function initLeaflet() {
   setTimeout(() => map?.invalidateSize(), 350);
 }
 
+/* ===== Buses markers ===== */
 function addOrUpdateBusMarker(bus) {
   if (!map) return;
   if (!Number.isFinite(Number(bus.lat)) || !Number.isFinite(Number(bus.lng))) return;
@@ -354,68 +672,170 @@ function addOrUpdateBusMarker(bus) {
 
   if (existing) {
     existing.setLatLng(pos);
-    existing.setIcon(makeBusDivIcon(bus, selected.value?.id === bus.id));
+    existing.setIcon(makeBusDivIcon(bus, selectedBus.value?.id === bus.id));
     return;
   }
 
-  const m = L.marker(pos, { icon: makeBusDivIcon(bus, selected.value?.id === bus.id) }).addTo(map);
+  const m = L.marker(pos, { icon: makeBusDivIcon(bus, selectedBus.value?.id === bus.id) }).addTo(map);
   m.on("click", () => selectBus(bus));
   busMarkers.set(bus.id, m);
 }
 
-function removeMarker(id) {
+function removeBusMarker(id) {
   const m = busMarkers.get(id);
   if (m && map) map.removeLayer(m);
   busMarkers.delete(id);
 }
 
-function refreshAllMarkerIcons() {
-  for (const b of buses.value) {
-    const m = busMarkers.get(b.id);
-    if (!m) continue;
-    m.setIcon(makeBusDivIcon(b, selected.value?.id === b.id));
-  }
-}
-
-function syncMarkersToBuses() {
+/* ===== Terminals markers ===== */
+function addOrUpdateTerminalMarker(t) {
   if (!map) return;
 
-  const nextIds = new Set(buses.value.map((b) => b.id));
-  for (const id of busMarkers.keys()) {
-    if (!nextIds.has(id)) removeMarker(id);
+  const id = t.terminal_id;
+  const lat = Number(t.lat);
+  const lng = Number(t.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+  const pos = [lat, lng];
+  const existing = terminalMarkers.get(id);
+
+  if (existing) {
+    existing.setLatLng(pos);
+    existing.setIcon(makeTerminalDivIcon(selectedTerminal.value?.terminal_id === id));
+    return;
   }
 
-  buses.value.forEach(addOrUpdateBusMarker);
-  refreshAllMarkerIcons();
+  const m = L.marker(pos, { icon: makeTerminalDivIcon(selectedTerminal.value?.terminal_id === id) }).addTo(map);
+  m.on("click", () => selectTerminal(t));
+  terminalMarkers.set(id, m);
+}
 
-  if (selected.value) {
-    const updated = buses.value.find((x) => x.id === selected.value.id);
-    if (updated) selected.value = updated;
+function removeTerminalMarker(id) {
+  const m = terminalMarkers.get(id);
+  if (m && map) map.removeLayer(m);
+  terminalMarkers.delete(id);
+}
+
+function refreshAllMarkerIcons() {
+  // buses
+  for (const b of uiBuses.value) {
+    const m = busMarkers.get(b.id);
+    if (!m) continue;
+    m.setIcon(makeBusDivIcon(b, selectedBus.value?.id === b.id));
+  }
+
+  // terminals
+  const list = terminals.value || [];
+  for (const t of list) {
+    const m = terminalMarkers.get(t.terminal_id);
+    if (!m) continue;
+    m.setIcon(makeTerminalDivIcon(selectedTerminal.value?.terminal_id === t.terminal_id));
   }
 }
 
-watch(buses, () => syncMarkersToBuses(), { deep: true });
+function syncBusMarkers() {
+  if (!map) return;
 
+  const nextIds = new Set(uiBuses.value.map((b) => b.id));
+  for (const id of busMarkers.keys()) {
+    if (!nextIds.has(id)) removeBusMarker(id);
+  }
+
+  uiBuses.value.forEach(addOrUpdateBusMarker);
+
+  if (selectedBus.value) {
+    const updated = uiBuses.value.find((x) => x.id === selectedBus.value.id);
+    if (updated) selectedBus.value = updated;
+  }
+
+  refreshAllMarkerIcons();
+}
+
+function syncTerminalMarkers() {
+  if (!map) return;
+
+  const list = terminals.value || [];
+  const nextIds = new Set(list.map((t) => t.terminal_id));
+
+  for (const id of terminalMarkers.keys()) {
+    if (!nextIds.has(id)) removeTerminalMarker(id);
+  }
+
+  list.forEach(addOrUpdateTerminalMarker);
+
+  if (selectedTerminal.value) {
+    const updated = list.find((x) => x.terminal_id === selectedTerminal.value.terminal_id);
+    if (updated) selectedTerminal.value = updated;
+
+    // ✅ keep range circle updated after polling
+    drawTerminalRangeCircle(selectedTerminal.value);
+  }
+
+  refreshAllMarkerIcons();
+}
+
+/* watch buses changes */
+watch(buses, () => syncBusMarkers(), { deep: true });
+
+/* watch terminals changes */
+watch(
+  terminals,
+  async () => {
+    await nextTick();
+    syncTerminalMarkers();
+  },
+  { deep: true }
+);
+
+/* =========================
+   Map actions
+========================= */
 function fitAll() {
   if (!map) return;
 
-  const pts = buses.value
-    .filter((b) => Number.isFinite(Number(b.lat)) && Number.isFinite(Number(b.lng)))
-    .map((b) => [Number(b.lat), Number(b.lng)]);
+  const pts = [];
+
+  uiBuses.value.forEach((b) => {
+    const lat = Number(b.lat);
+    const lng = Number(b.lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) pts.push([lat, lng]);
+  });
+
+  (terminals.value || []).forEach((t) => {
+    const lat = Number(t.lat);
+    const lng = Number(t.lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) pts.push([lat, lng]);
+  });
 
   if (!pts.length) return;
   map.fitBounds(L.latLngBounds(pts), { padding: [40, 40] });
 }
 
-function centerOnSelected() {
-  if (!map || !selected.value) return;
-  map.flyTo([Number(selected.value.lat), Number(selected.value.lng)], Math.max(map.getZoom(), 16), { duration: 0.5 });
+function centerOnSelectedBus() {
+  if (!map || !selectedBus.value) return;
+  map.flyTo([Number(selectedBus.value.lat), Number(selectedBus.value.lng)], Math.max(map.getZoom(), 16), {
+    duration: 0.5,
+  });
 }
 
-function zoomIn() { map?.zoomIn(); }
-function zoomOut() { map?.zoomOut(); }
+function centerOnSelectedTerminal() {
+  if (!map || !selectedTerminal.value) return;
+  map.flyTo([Number(selectedTerminal.value.lat), Number(selectedTerminal.value.lng)], Math.max(map.getZoom(), 15), {
+    duration: 0.5,
+  });
+}
 
-function refreshOnce() { fetchOnce(); }
+function zoomIn() {
+  map?.zoomIn();
+}
+function zoomOut() {
+  map?.zoomOut();
+}
+
+function refreshOnce() {
+  fetchOnce();
+  loadTerminalsOnce();
+}
 
 function centerOnMe() {
   if (!map) return;
@@ -436,17 +856,31 @@ function centerOnMe() {
   );
 }
 
+/* =========================
+   Lifecycle
+========================= */
 onMounted(async () => {
   initLeaflet();
+
   start();
   await fetchOnce();
+
+  await loadTerminalsOnce();
+  terminalPoll = setInterval(loadTerminalsOnce, 8000);
+
   await nextTick();
-  syncMarkersToBuses();
+  syncBusMarkers();
+  syncTerminalMarkers();
   setTimeout(() => map?.invalidateSize(), 350);
 });
 
 onUnmounted(() => {
   stop();
+  if (terminalPoll) clearInterval(terminalPoll);
+
+  // ✅ cleanup range circle
+  clearTerminalRangeCircle();
+
   if (map) {
     map.off();
     map.remove();
@@ -456,8 +890,21 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* ONLY ADDITIONS */
+.lt-occ{
+  display:inline-flex;
+  align-items:center;
+  gap: 6px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.lt-occ i{ color: #64748b; }
+
+/* legend range dot */
+.lt-dot.range{ background: rgba(14,165,233,0.35); border: 1px solid rgba(14,165,233,0.65); }
+
 /* =========================================================
-   LIVE TRACKING (your exact design)
+   LIVE TRACKING (your exact design) + TERMINAL ICON MARKER
 ========================================================= */
 
 .lt-page{
@@ -710,7 +1157,7 @@ onUnmounted(() => {
   gap: 8px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.08);
   backdrop-filter: blur(8px);
-  z-index: 500; /* above leaflet tiles */
+  z-index: 500;
 }
 .lt-legend__item{
   display:flex;
@@ -720,6 +1167,11 @@ onUnmounted(() => {
   font-weight: 600;
   color: #334155;
 }
+.lt-legend__sep{
+  height: 1px;
+  background: #e2e8f0;
+  margin: 2px 0;
+}
 .lt-dot{
   width: 8px;
   height: 8px;
@@ -728,6 +1180,7 @@ onUnmounted(() => {
 .lt-dot.ok{ background: #16a34a; }
 .lt-dot.warn{ background: #fb923c; }
 .lt-dot.bad{ background: #ef4444; }
+.lt-dot.term{ background: #0ea5e9; }
 
 /* Panel */
 .lt-panel{
@@ -736,7 +1189,9 @@ onUnmounted(() => {
   height: 100%;
   min-height: 600px;
 }
-.lt-panel__head{ align-items:flex-start; }
+.lt-panel__head{
+  align-items:flex-start;
+}
 .lt-panel__title{
   display:flex;
   align-items:center;
@@ -760,6 +1215,38 @@ onUnmounted(() => {
   background: #dbeafe;
   color: #1e40af;
 }
+.lt-panel-switch{
+  display:flex;
+  gap: 8px;
+  align-items:center;
+  flex-wrap: wrap;
+}
+.lt-switch{
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: rgba(255,255,255,0.7);
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  cursor:pointer;
+  display:inline-flex;
+  align-items:center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+.lt-switch:hover{
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+.lt-switch.on{
+  border-color: #3b82f6;
+  background: #dbeafe;
+  color: #1e40af;
+}
+
 .lt-panel__tools{
   padding: 12px;
   border-bottom: 1px solid #e2e8f0;
@@ -839,8 +1326,17 @@ onUnmounted(() => {
   background: #dbeafe;
   color: #1e40af;
 }
+.lt-term-hint{
+  margin-top: 10px;
+  display:flex;
+  gap: 8px;
+  align-items:center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+}
 
-/* list */
+/* list base */
 .lt-list{
   padding: 8px;
   display:flex;
@@ -849,6 +1345,8 @@ onUnmounted(() => {
   overflow:auto;
   flex: 1;
 }
+
+/* bus item */
 .lt-item{
   width: 100%;
   text-align:left;
@@ -881,8 +1379,12 @@ onUnmounted(() => {
 .lt-item__route{
   margin-top: 4px;
   font-size: 12px;
-  font-weight: 500;
-  color: #64748b;
+  font-weight: 600;
+  color: #475569;
+  display:flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items:center;
 }
 .lt-item__right{
   text-align:right;
@@ -946,28 +1448,118 @@ onUnmounted(() => {
 }
 .lt-sep{ color: #cbd5e1; }
 
-/* Analytics */
-.lt-ana-body{
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 300px;
+/* terminal list item */
+.lt-term-item{
+  width: 100%;
+  text-align:left;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: rgba(255,255,255,0.5);
+  padding: 12px;
+  cursor:pointer;
+  transition: all 0.2s ease;
 }
-.lt-ana-title{
-  font-weight: 700;
-  font-size: 16px;
+.lt-term-item:hover{
+  background: rgba(14, 165, 233, 0.06);
+  border-color: #cbd5e1;
+}
+.lt-term-item.on{
+  background: rgba(14, 165, 233, 0.12);
+  border-color: rgba(14, 165, 233, 0.55);
+}
+.lt-term-top{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap: 12px;
+}
+.lt-term-left{
+  display:flex;
+  gap: 10px;
+  align-items:flex-start;
+}
+.lt-term-badge{
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background: linear-gradient(135deg, rgba(14,165,233,0.16), rgba(6,182,212,0.10));
+  color: #0284c7;
+  flex-shrink:0;
+}
+.lt-term-meta{ min-width: 0; }
+.lt-term-title{
+  display:flex;
+  align-items:baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.lt-term-name{
+  font-weight: 800;
+  font-size: 13px;
   color: #0f172a;
 }
-.lt-ana-sub{
-  margin-top: 8px;
-  font-size: 14px;
-  font-weight: 500;
+.lt-term-id{
+  font-size: 11px;
+  font-weight: 800;
+  color: #64748b;
+  background: rgba(148,163,184,0.18);
+  border: 1px solid rgba(148,163,184,0.30);
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+.lt-term-sub{
+  margin-top: 4px;
+  display:flex;
+  gap: 6px;
+  align-items:center;
+  font-size: 12px;
+  font-weight: 600;
   color: #64748b;
 }
+.lt-term-right{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  flex-shrink:0;
+}
+.lt-term-pill{
+  display:inline-flex;
+  align-items:center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(14,165,233,0.35);
+  background: rgba(14,165,233,0.10);
+  color: #0369a1;
+  font-weight: 800;
+  font-size: 11px;
+}
+.lt-term-bottom{
+  margin-top: 10px;
+  display:flex;
+  gap: 8px;
+  align-items:center;
+  flex-wrap: wrap;
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+}
+.lt-empty-mini{
+  padding: 18px 10px;
+  border-radius: 10px;
+  border: 1px dashed #cbd5e1;
+  background: rgba(255,255,255,0.35);
+  text-align:center;
+  color: #64748b;
+}
+.lt-empty-mini i{ font-size: 18px; color: #0ea5e9; }
+.lt-empty-mini p{ margin: 8px 0 2px; font-weight: 800; color: #0f172a; }
+.lt-empty-mini small{ font-weight: 600; }
 
-/* Floating details */
+/* Floating */
 .lt-float{
   position: fixed;
   bottom: 20px;
@@ -995,8 +1587,8 @@ onUnmounted(() => {
 .lt-float__sub{
   margin-top: 4px;
   font-size: 12px;
-  font-weight: 500;
-  color: #64748b;
+  font-weight: 600;
+  color: #475569;
 }
 .lt-mini-badge{
   margin-left: 8px;
@@ -1028,6 +1620,11 @@ onUnmounted(() => {
   border-color: #e2e8f0;
   background: #f8fafc;
 }
+.lt-mini-badge--term{
+  border-color: rgba(14,165,233,0.35);
+  background: rgba(14,165,233,0.10);
+  color: #0369a1;
+}
 .lt-float__right{
   display:flex;
   align-items:center;
@@ -1036,7 +1633,7 @@ onUnmounted(() => {
 }
 .muted{ color: #64748b; }
 
-/* ✅ Leaflet marker styling (matches your design) */
+/* ===== Leaflet bus marker ===== */
 :global(.lt-leaflet-bus-icon){
   background: transparent !important;
   border: none !important;
@@ -1069,6 +1666,133 @@ onUnmounted(() => {
   box-shadow: 0 14px 30px rgba(0,0,0,0.18);
 }
 
+/* ===== Leaflet terminal marker (REAL TERMINAL ICON) ===== */
+:global(.lt-leaflet-term-icon){
+  background: transparent !important;
+  border: none !important;
+}
+:global(.leaflet-marker-pane .lt-leaflet-term-icon){
+  z-index: 700 !important;
+}
+
+:global(.lt-term-marker){
+  width: 44px;
+  height: 44px;
+  position: relative;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  transform: translateZ(0);
+}
+
+:global(.lt-term-ring){
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: radial-gradient(circle at 50% 50%,
+    rgba(14,165,233,0.28) 0%,
+    rgba(14,165,233,0.10) 45%,
+    rgba(14,165,233,0.00) 70%
+  );
+  filter: blur(0.2px);
+}
+
+:global(.lt-term-sign){
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  transform: translateX(-50%);
+  height: 18px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(14,165,233,0.45);
+  background: rgba(255,255,255,0.95);
+  color: #0284c7;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 18px rgba(0,0,0,0.10);
+  font-size: 12px;
+}
+
+:global(.lt-term-base){
+  position: absolute;
+  left: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+  width: 28px;
+  height: 22px;
+  border-radius: 8px;
+  border: 2px solid rgba(14,165,233,0.60);
+  background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(241,245,249,0.90));
+  box-shadow: 0 14px 22px rgba(0,0,0,0.14);
+}
+:global(.lt-term-base::before){
+  content: "";
+  position: absolute;
+  left: -3px;
+  right: -3px;
+  top: -7px;
+  height: 10px;
+  border-radius: 10px;
+  border: 2px solid rgba(14,165,233,0.60);
+  background: rgba(255,255,255,0.95);
+}
+:global(.lt-term-door){
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  transform: translateX(-50%);
+  width: 8px;
+  height: 10px;
+  border-radius: 3px;
+  background: rgba(2,132,199,0.25);
+  border: 1px solid rgba(2,132,199,0.35);
+}
+:global(.lt-term-window){
+  position: absolute;
+  top: 7px;
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  background: rgba(14,165,233,0.16);
+  border: 1px solid rgba(14,165,233,0.30);
+}
+:global(.lt-term-window.w1){ left: 5px; }
+:global(.lt-term-window.w2){ right: 5px; }
+
+:global(.lt-term-shadow){
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  transform: translateX(-50%);
+  width: 28px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(15,23,42,0.12);
+  filter: blur(2px);
+}
+
+:global(.lt-term-marker.selected .lt-term-ring){
+  background: radial-gradient(circle at 50% 50%,
+    rgba(34,197,94,0.30) 0%,
+    rgba(34,197,94,0.10) 45%,
+    rgba(34,197,94,0.00) 70%
+  );
+}
+:global(.lt-term-marker.selected .lt-term-sign){
+  border-color: rgba(34,197,94,0.55);
+  color: #16a34a;
+}
+:global(.lt-term-marker.selected .lt-term-base){
+  border-color: rgba(34,197,94,0.65);
+}
+:global(.lt-term-marker.selected .lt-term-base::before){
+  border-color: rgba(34,197,94,0.65);
+}
+
+/* my marker */
 :global(.lt-leaflet-me-icon){
   background: transparent !important;
   border: none !important;
@@ -1088,7 +1812,7 @@ onUnmounted(() => {
     grid-template-columns: 1fr;
     height: auto;
   }
-  .lt-panel{ min-height: 400px; }
+  .lt-panel{ min-height: 420px; }
   .lt-map__canvas{ min-height: 400px; }
 }
 @media (max-width: 980px){
@@ -1110,5 +1834,7 @@ onUnmounted(() => {
   .lt-stats{ grid-template-columns: 1fr; }
   .lt-head__right { flex-direction: column; }
   .lt-btn { width: 100%; }
+  .lt-panel-switch{ width: 100%; }
+  .lt-switch{ flex: 1; justify-content:center; }
 }
 </style>

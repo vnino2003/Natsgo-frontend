@@ -1,12 +1,13 @@
+<!-- src/pages/admin/BusesPage.vue (COMPLETE UPDATED: includes Terminal State / Route from bus_terminal_state) -->
 <template>
   <div class="bus-page">
-    <!-- Header + Toolbar -->
     <div class="bus-shell">
+      <!-- Header -->
       <div class="bus-head">
         <div class="bus-head-left">
           <div class="bus-head-title">
             <p class="bus-title">Bus List</p>
-            <p class="bus-sub">Fleet records, assignment status, and live occupancy.</p>
+            <p class="bus-sub">Fleet records, assignment status, live occupancy, and current route (terminal state).</p>
           </div>
 
           <div class="bus-head-state">
@@ -53,45 +54,14 @@
 
         <!-- Filters -->
         <div class="bus-filters">
-          <button
-            class="bus-chip"
-            :class="{ active: filterStatus === 'all' }"
-            type="button"
-            @click="filterStatus = 'all'"
-          >
-            All
-            <span class="bus-chip-count">{{ counts.all }}</span>
+          <button class="bus-chip" :class="{ active: filterStatus === 'all' }" type="button" @click="filterStatus = 'all'">
+            All <span class="bus-chip-count">{{ counts.all }}</span>
           </button>
 
-          <button
-            class="bus-chip"
-            :class="{ active: filterStatus === 'active' }"
-            type="button"
-            @click="filterStatus = 'active'"
-          >
-            Active
-            <span class="bus-chip-count">{{ counts.active }}</span>
-          </button>
+    
 
-          <button
-            class="bus-chip"
-            :class="{ active: filterStatus === 'maintenance' }"
-            type="button"
-            @click="filterStatus = 'maintenance'"
-          >
-            Maintenance
-            <span class="bus-chip-count">{{ counts.maintenance }}</span>
-          </button>
+  
 
-          <button
-            class="bus-chip"
-            :class="{ active: filterStatus === 'inactive' }"
-            type="button"
-            @click="filterStatus = 'inactive'"
-          >
-            Inactive
-            <span class="bus-chip-count">{{ counts.inactive }}</span>
-          </button>
         </div>
       </div>
 
@@ -104,18 +74,14 @@
               <th>Plate No</th>
               <th>Capacity / Occupancy</th>
               <th>Device</th>
+              <th>Route</th>
               <th>Last Seen</th>
-              <th>Status</th>
               <th class="bus-right">Actions</th>
             </tr>
           </thead>
 
           <tbody>
-            <tr
-              v-for="b in filteredRows"
-              :key="b.id"
-              :class="{ 'bus-row-full': isFull(b) }"
-            >
+            <tr v-for="b in filteredRows" :key="b.id" :class="{ 'bus-row-full': isFull(b) }">
               <!-- Bus -->
               <td>
                 <div class="bus-buscell">
@@ -124,9 +90,7 @@
                   </div>
                   <div class="bus-busmeta">
                     <div class="bus-buscode bus-mono">{{ b.bus_code }}</div>
-                    <div class="bus-mini">
-                      ID: <span class="bus-mono">{{ b.id }}</span>
-                    </div>
+                    <div class="bus-mini">ID: <span class="bus-mono">{{ b.id }}</span></div>
                   </div>
                 </div>
               </td>
@@ -134,7 +98,7 @@
               <!-- Plate -->
               <td class="bus-cell-strong">{{ b.plate_no || "—" }}</td>
 
-              <!-- Capacity/Occ -->
+              <!-- Capacity / Occupancy -->
               <td>
                 <div class="bus-cap-col">
                   <div class="bus-cap-top">
@@ -186,7 +150,25 @@
                 </div>
               </td>
 
-              <!-- Last seen -->
+              <!-- Route -->
+              <td>
+                <span class="bus-pill" :class="routePill(b).cls">
+                  <i class="fas" :class="routePill(b).ico"></i>
+                  {{ routePill(b).text }}
+                </span>
+
+                <div class="bus-mini" v-if="b.terminal_state?.dist_m != null">
+                  Dist: {{ Math.round(b.terminal_state.dist_m) }}m
+                  <span v-if="Number(b.terminal_state?.at_terminal) === 1"> • at terminal</span>
+                  <span v-else> • on road</span>
+                </div>
+
+                <div class="bus-mini" v-else-if="b.device_status === 'assigned'">
+                  — no terminal state yet
+                </div>
+              </td>
+
+              <!-- Last Seen -->
               <td>
                 <span class="bus-cell-strong">{{ timeAgo(b.device_last_seen_at) }}</span>
                 <div class="bus-mini" v-if="b.device_last_seen_at">
@@ -195,11 +177,7 @@
               </td>
 
               <!-- Status -->
-              <td>
-                <span class="bus-pill" :class="statusPill(b.bus_status).cls">
-                  {{ prettyStatus(b.bus_status) }}
-                </span>
-              </td>
+          
 
               <!-- Actions -->
               <td class="bus-right">
@@ -215,7 +193,7 @@
             </tr>
 
             <tr v-if="!loading && filteredRows.length === 0">
-              <td colspan="7">
+              <td colspan="8">
                 <div class="bus-empty">
                   <i class="fas fa-inbox"></i>
                   <p>No buses found</p>
@@ -275,14 +253,7 @@
                 />
               </label>
 
-              <label class="admin-field">
-                <span>Status</span>
-                <select class="admin-input" v-model="form.bus_status">
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                  <option value="maintenance">Maintenance</option>
-                </select>
-              </label>
+     
             </div>
 
             <p v-if="modalError" class="admin-err">
@@ -373,6 +344,9 @@ const filteredRows = computed(() => {
       b.device_status,
       b.device?.device_code,
       b.device?.esp32_id,
+      b.route_label,
+      b.terminal_state?.current_terminal_name,
+      b.terminal_state?.target_terminal_name,
     ].some((x) => String(x ?? "").toLowerCase().includes(q))
   );
 });
@@ -420,6 +394,27 @@ function devicePill(b) {
   return { text: "Assigned • Offline", cls: "bus-pill-yellow", ico: "fa-link" };
 }
 
+function routePill(b) {
+  if (String(b.device_status || "").toLowerCase() !== "assigned") {
+    return { text: "No device", cls: "bus-pill-red", ico: "fa-ban" };
+  }
+
+  const ts = b.terminal_state;
+  if (!ts) return { text: "No terminal state", cls: "bus-pill-yellow", ico: "fa-question" };
+
+  const cur = ts.current_terminal_name;
+  const tgt = ts.target_terminal_name;
+
+  const label =
+    b.route_label ||
+    (cur && tgt ? `${cur} → ${tgt}` : cur && !tgt ? `${cur} → —` : !cur && tgt ? `— → ${tgt}` : "Unknown route");
+
+  if (Number(ts.at_terminal) === 1) {
+    return { text: label, cls: "bus-pill-green", ico: "fa-location-dot" };
+  }
+  return { text: label, cls: "bus-pill-blue", ico: "fa-road" };
+}
+
 function timeAgo(dateLike) {
   if (!dateLike) return "—";
   const dt = new Date(dateLike);
@@ -440,7 +435,6 @@ function formatTs(dateLike) {
   if (!dateLike) return "";
   const dt = new Date(dateLike);
   if (isNaN(dt.getTime())) return "";
-  // simple readable format
   return dt.toLocaleString();
 }
 
@@ -519,10 +513,8 @@ async function saveBus() {
   saving.value = true;
   try {
     if (!editing.value) {
-      // create
       await addBus(payload);
     } else {
-      // update (support either editBus(id,payload) or editBus(payload-with-id))
       if (typeof apiEditBus === "function" && apiEditBus.length >= 2) {
         await apiEditBus(form.id, payload);
       } else {
@@ -539,3 +531,4 @@ async function saveBus() {
   }
 }
 </script>
+

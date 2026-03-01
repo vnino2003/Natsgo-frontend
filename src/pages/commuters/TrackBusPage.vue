@@ -1,71 +1,15 @@
 <!-- src/pages/commuters/TrackBusPage.vue
-  ✅ Applied:
-  - Uses composable useLiveBuses() (NO direct axios here)
-  - Fetches ONLY buses with assigned device + latest gps (via /api/commuter/buses/live)
-  - Redraw markers when buses list updates (watch)
-  - Keeps your location gate + bottom sheet + UI intact
+     UPDATED (COMPLETE):
+     ✅ uses useUserLocation() singleton (permission handled globally)
+     ✅ uses useLiveBuses() (polling)
+     ✅ uses useTerminals() composable (IMPORTANT: plural file)
+     ✅ terminal markers + terminal info card + buses inside
+     ✅ supports navigation from TerminalPage:
+        /commuter/track?terminalId=123  -> auto-focus that terminal + open card
+     ✅ safer bus-at-terminal detection (supports multiple payload shapes)
 -->
-
 <template>
   <div class="tb-page">
-    <!-- ✅ Location Gate Overlay -->
-    <Transition name="fade">
-      <div v-if="showLocationGate" class="tb-permission-overlay">
-        <div class="tb-permission-card">
-          <div class="tb-permission-icon">
-            <i class="fas fa-location-dot"></i>
-          </div>
-
-          <h2 class="tb-permission-title">{{ gateTitle }}</h2>
-          <p class="tb-permission-text">{{ gateText }}</p>
-
-          <div class="tb-gate-status" :class="gateStatusClass">
-            <span v-if="gateStatus === 'idle'">
-              <i class="fas fa-circle-info"></i> Tap to request location
-            </span>
-            <span v-else-if="gateStatus === 'requesting'">
-              <i class="fas fa-spinner fa-spin"></i> Requesting permission…
-            </span>
-            <span v-else-if="gateStatus === 'connecting'">
-              <i class="fas fa-signal"></i> Waiting for GPS fix…
-            </span>
-            <span v-else-if="gateStatus === 'connected'">
-              <i class="fas fa-check"></i> Location Connected
-            </span>
-            <span v-else>
-              <i class="fas fa-triangle-exclamation"></i> Blocked / unavailable
-            </span>
-          </div>
-
-          <button
-            class="tb-btn tb-btn-primary"
-            @click="startLocationFlow"
-            :disabled="gateStatus === 'requesting' || gateStatus === 'connecting'"
-            type="button"
-          >
-            <i class="fas fa-check"></i>
-            Turn On Location
-          </button>
-
-          <button class="tb-btn tb-btn-ghost" @click="skipLocation" type="button">
-            Use Without Location
-          </button>
-
-          <div v-if="gateStatus === 'error'" class="tb-gate-help">
-            <div class="tb-gate-help-title">
-              <i class="fas fa-gear"></i> How to fix
-            </div>
-            <ul class="tb-gate-help-list">
-              <li>Chrome: 🔒 icon → Site settings → Location → Allow</li>
-              <li>Make sure Location is ON in device settings</li>
-              <li>Refresh page and tap “Turn On Location” again</li>
-              <li>⚠️ Geolocation needs HTTPS (or localhost)</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-    </Transition>
-
     <!-- Map -->
     <div class="tb-map-wrap">
       <div class="tb-map" ref="mapEl"></div>
@@ -103,10 +47,21 @@
             • Speed: {{ selectedBus.speedKmh ?? "—" }} km/h
           </div>
 
+          <!-- Terminal + Occupancy chips -->
           <div class="tb-chipline">
             <span class="tb-chip-mini" :class="occClass(selectedBus)">
               <i class="fas fa-user"></i>
               {{ seatsLabel(selectedBus) }}
+            </span>
+
+            <span class="tb-chip-mini tb-chip-term" :class="{ at: isAtTerminal(selectedBus) }">
+              <i class="fas" :class="isAtTerminal(selectedBus) ? 'fa-building' : 'fa-route'"></i>
+              {{ terminalLabel(selectedBus) }}
+            </span>
+
+            <span v-if="selectedBus.directionLabel" class="tb-chip-mini tb-chip-dir">
+              <i class="fas fa-arrows-left-right"></i>
+              {{ selectedBus.directionLabel }}
             </span>
           </div>
 
@@ -118,6 +73,53 @@
               <i class="fas fa-user"></i> Me
             </button>
             <button class="tb-mini-btn" @click="openSheetMid" type="button">
+              <i class="fas fa-list"></i> List
+            </button>
+          </div>
+        </div>
+      </Transition>
+
+      <!-- Selected terminal card -->
+      <Transition name="slide-up">
+        <div v-if="selectedTerminal" class="tb-term-card" aria-hidden="false">
+          <div class="tb-term-card-top">
+            <div class="tb-term-title">
+              <i class="fas fa-building"></i>
+              <span>{{ selectedTerminal.terminal_name || "Terminal" }}</span>
+            </div>
+
+            <button class="tb-bus-close" @click="closeTerminal" aria-label="Close terminal">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+
+          <div class="tb-term-sub">
+            <i class="fas fa-location-dot"></i>
+            <span>{{ selectedTerminal.city || "—" }}</span>
+          </div>
+
+          <div class="tb-term-stats">
+            <div class="tb-term-stat">
+              <div class="tb-term-stat__label">Buses inside</div>
+              <div class="tb-term-stat__value">{{ busesInsideCount(selectedTerminal.terminal_id) }}</div>
+            </div>
+
+            <div class="tb-term-stat">
+              <div class="tb-term-stat__label">Buses list</div>
+              <div class="tb-term-stat__value tb-term-small">
+                <span v-if="busesInsideList(selectedTerminal.terminal_id).length === 0">—</span>
+                <span v-else>
+                  {{ busesInsideList(selectedTerminal.terminal_id).join(", ") }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div class="tb-mini-actions">
+            <button class="tb-mini-btn" type="button" @click="focusTerminal(selectedTerminal)">
+              <i class="fas fa-location-arrow"></i> Focus
+            </button>
+            <button class="tb-mini-btn" type="button" @click="openSheetMid">
               <i class="fas fa-list"></i> List
             </button>
           </div>
@@ -198,6 +200,11 @@
               <div class="tb-bus-row-main">
                 <div class="tb-row-line1">
                   <p class="tb-bus-row-title">{{ bus.route }}</p>
+
+                  <span class="tb-mini-pill" :class="{ at: isAtTerminal(bus) }">
+                    <i class="fas" :class="isAtTerminal(bus) ? 'fa-building' : 'fa-route'"></i>
+                    {{ isAtTerminal(bus) ? "At Terminal" : "En Route" }}
+                  </span>
                 </div>
 
                 <div class="tb-row-line2">
@@ -211,6 +218,20 @@
                   <span class="tb-metric">
                     <i class="fas fa-clock"></i>
                     {{ hasUserLocation ? formatEta(etaMinutes(bus)) : "—" }}
+                  </span>
+
+                  <span class="tb-dotsep">•</span>
+
+                  <span class="tb-metric tb-muted">
+                    <i class="fas fa-map-location-dot"></i>
+                    {{ terminalLabel(bus) }}
+                  </span>
+
+                  <span class="tb-dotsep">•</span>
+
+                  <span class="tb-metric tb-muted">
+                    <i class="fas fa-arrows-left-right"></i>
+                    {{ bus.directionLabel }}
                   </span>
 
                   <span class="tb-dotsep">•</span>
@@ -257,144 +278,106 @@
 
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import L from "leaflet";
 import { useLiveBuses } from "../../composables/useLiveBuses";
+import { useUserLocation } from "@/composables/useUserLocation";
+/* ✅ IMPORTANT: plural file name */
+import { useTerminals } from "@/composables/useTerminal";
+
+/* ========= Router (focus terminal from TerminalPage) ========= */
+const route = useRoute();
+const router = useRouter();
 
 /* ========= State ========= */
-// Neutral fallback view (not “user location”)
-const FALLBACK_VIEW = { lat: 12.8797, lng: 121.774 }; // Philippines center-ish
+const FALLBACK_VIEW = { lat: 12.8797, lng: 121.774 };
 
 const mapEl = ref(null);
 const sheetEl = ref(null);
 const sheetHandleEl = ref(null);
 const sheetContentEl = ref(null);
 
-// User position is null until enabled
-const currentPos = ref(null); // {lat,lng} | null
-const hasUserLocation = ref(false);
-
 const selectedBus = ref(null);
+const selectedTerminal = ref(null);
 
-// ✅ buses comes from composable
 const { buses, start: startLive, stop: stopLive, fetchOnce } = useLiveBuses({ intervalMs: 1000 });
 
 const query = ref("");
 const filter = ref("nearby");
 
-/* ========= Location Gate ========= */
-const gateStatus = ref("idle"); // idle | requesting | connecting | connected | error
-const usingWithoutLocation = ref(false);
+/* ========= Location (global singleton) ========= */
+const { coords, hasLocation } = useUserLocation();
 
-const showLocationGate = computed(() => {
-  if (usingWithoutLocation.value) return false;
-  return gateStatus.value !== "connected";
-});
-
-const gateTitle = computed(() => {
-  if (gateStatus.value === "connected") return "Location Connected";
-  if (gateStatus.value === "requesting") return "Requesting Permission…";
-  if (gateStatus.value === "connecting") return "Connecting…";
-  if (gateStatus.value === "error") return "Enable Location";
-  return "Turn On Location";
-});
-
-const gateText = computed(() => {
-  if (gateStatus.value === "connected") return "Thanks! You can now use Nearby, Distance, and ETA.";
-  if (gateStatus.value === "requesting") return "Please allow location permission in your browser.";
-  if (gateStatus.value === "connecting") return "Waiting for GPS fix. Please stay still for a moment.";
-  if (gateStatus.value === "error")
-    return "Location is needed for Nearby, Distance, and ETA. You can still view buses without it.";
-  return "Turn on location to show Nearby buses and compute distance + ETA.";
-});
-
-const gateStatusClass = computed(() => {
-  if (gateStatus.value === "connected") return "ok";
-  if (gateStatus.value === "error") return "bad";
-  if (gateStatus.value === "requesting" || gateStatus.value === "connecting") return "warn";
-  return "";
-});
-
-let geoWatchId = null;
-
-function startLocationFlow() {
-  if (!navigator.geolocation) {
-    gateStatus.value = "error";
-    hasUserLocation.value = false;
-    currentPos.value = null;
-    removeUserMarker();
-    return;
-  }
-
-  gateStatus.value = "requesting";
-
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      gateStatus.value = "connecting";
-      hasUserLocation.value = true;
-      currentPos.value = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-
-      ensureUserMarker();
-
-      geoWatchId = navigator.geolocation.watchPosition(
-        (p) => {
-          hasUserLocation.value = true;
-          currentPos.value = { lat: p.coords.latitude, lng: p.coords.longitude };
-          gateStatus.value = "connected";
-          ensureUserMarker();
-          updateUserMarker();
-        },
-        () => {
-          gateStatus.value = "error";
-          hasUserLocation.value = false;
-          currentPos.value = null;
-          removeUserMarker();
-        },
-        { enableHighAccuracy: true, maximumAge: 3000, timeout: 15000 }
-      );
-    },
-    () => {
-      gateStatus.value = "error";
-      hasUserLocation.value = false;
-      currentPos.value = null;
-      removeUserMarker();
-    },
-    { enableHighAccuracy: true, timeout: 15000 }
-  );
-}
-
-function skipLocation() {
-  usingWithoutLocation.value = true;
-  filter.value = "all";
-  hasUserLocation.value = false;
-  currentPos.value = null;
-  removeUserMarker();
-}
+const hasUserLocation = computed(() => !!hasLocation.value && !!coords.value);
+const currentPos = computed(() => (coords.value ? { lat: coords.value.lat, lng: coords.value.lng } : null));
 
 watch(hasUserLocation, (val) => {
   if (!val && filter.value === "nearby") filter.value = "all";
 });
 
+/* ========= Terminals ========= */
+const { rows: terminalsRows, fetchTerminals } = useTerminals();
+const terminals = computed(() => terminalsRows.value || []);
+let terminalPoll = null;
+
+const terminalById = computed(() => {
+  const m = new Map();
+  for (const t of terminals.value) m.set(Number(t.terminal_id), t);
+  return m;
+});
+
+function findTerminalById(id) {
+  const tid = Number(id);
+  if (!Number.isFinite(tid)) return null;
+  return terminals.value.find((t) => Number(t.terminal_id) === tid) || null;
+}
+
+/* focus if query has terminalId */
+async function maybeFocusTerminalFromQuery() {
+  const tid = route.query?.terminalId;
+  if (!tid) return;
+
+  const t = findTerminalById(tid);
+  if (!t) return;
+
+  selectTerminal(t);
+
+  // optional: clear query so it won’t re-trigger if you come back
+  const q = { ...route.query };
+  delete q.terminalId;
+  router.replace({ query: q });
+}
+
+async function loadTerminalsOnce() {
+  await fetchTerminals({ q: "" });
+  await nextTick();
+  syncTerminalMarkers();
+  await nextTick();
+  await maybeFocusTerminalFromQuery();
+}
+
 /* ========= Leaflet ========= */
 let map = null;
 let userMarker = null;
 const busMarkers = new Map();
+const terminalMarkers = new Map();
 
 function initLeaflet() {
   if (!mapEl.value || map) return;
 
-  map = L.map(mapEl.value, {
-    zoomControl: false,
-    attributionControl: false,
-    tap: true,
-  }).setView([FALLBACK_VIEW.lat, FALLBACK_VIEW.lng], 6);
+  map = L.map(mapEl.value, { zoomControl: false, attributionControl: false, tap: true }).setView(
+    [FALLBACK_VIEW.lat, FALLBACK_VIEW.lng],
+    6
+  );
 
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-    maxZoom: 20,
-  }).addTo(map);
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", { maxZoom: 20 }).addTo(map);
 
   map.on("click", (e) => {
     if (e?.originalEvent?.target?.closest?.(".tb-leaflet-bus-pill")) return;
+    if (e?.originalEvent?.target?.closest?.(".tb-leaflet-term-pill")) return;
+
     selectedBus.value = null;
+    selectedTerminal.value = null;
     refreshAllBusMarkerIcons();
     collapseSheet();
   });
@@ -403,6 +386,7 @@ function initLeaflet() {
   setTimeout(() => map && map.invalidateSize(), 350);
 }
 
+/* user marker */
 function makeUserDivIcon() {
   return L.divIcon({
     className: "tb-leaflet-user-icon",
@@ -411,47 +395,102 @@ function makeUserDivIcon() {
     iconAnchor: [8, 8],
   });
 }
-
 function ensureUserMarker() {
   if (!map || !hasUserLocation.value || !currentPos.value) return;
   if (userMarker) return;
-
-  userMarker = L.marker([currentPos.value.lat, currentPos.value.lng], {
-    icon: makeUserDivIcon(),
-    interactive: false,
-  }).addTo(map);
+  userMarker = L.marker([currentPos.value.lat, currentPos.value.lng], { icon: makeUserDivIcon(), interactive: false }).addTo(map);
 }
-
 function updateUserMarker() {
   if (!map || !userMarker || !currentPos.value) return;
   userMarker.setLatLng([currentPos.value.lat, currentPos.value.lng]);
 }
-
 function removeUserMarker() {
   if (!map || !userMarker) return;
   map.removeLayer(userMarker);
   userMarker = null;
 }
 
+/* terminals marker */
+function makeTerminalDivIcon() {
+  return L.divIcon({
+    className: "tb-leaflet-term-icon",
+    html: `
+      <div class="tb-leaflet-term-pill" aria-label="terminal">
+        <i class="fas fa-building"></i>
+      </div>
+    `,
+    iconSize: [34, 34],
+    iconAnchor: [17, 30],
+  });
+}
+function addOrUpdateTerminalMarker(t) {
+  if (!map) return;
+  const lat = Number(t.lat);
+  const lng = Number(t.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+  const id = Number(t.terminal_id);
+  const pos = [lat, lng];
+
+  const existing = terminalMarkers.get(id);
+  if (existing) {
+    existing.setLatLng(pos);
+    return;
+  }
+
+  const m = L.marker(pos, { icon: makeTerminalDivIcon() }).addTo(map);
+  m.on("click", () => selectTerminal(t));
+  terminalMarkers.set(id, m);
+}
+function removeTerminalMarker(id) {
+  const m = terminalMarkers.get(id);
+  if (m && map) map.removeLayer(m);
+  terminalMarkers.delete(id);
+}
+function syncTerminalMarkers() {
+  if (!map) return;
+  const list = terminals.value || [];
+  const nextIds = new Set(list.map((t) => Number(t.terminal_id)));
+
+  for (const id of terminalMarkers.keys()) {
+    if (!nextIds.has(id)) removeTerminalMarker(id);
+  }
+
+  list.forEach(addOrUpdateTerminalMarker);
+}
+
+/* buses marker */
+function occClass(bus) {
+  const cap = Number(bus.capacity ?? 0);
+  const used = Number(bus.seats ?? 0);
+  if (!cap || cap < 1) return "low";
+  const r = Math.max(0, Math.min(1, used / cap));
+  if (r >= 0.85) return "full";
+  if (r >= 0.55) return "mid";
+  return "low";
+}
 function makeBusDivIcon(bus, isSelected = false) {
   const cls = occClass(bus);
   const sel = isSelected ? "selected" : "";
+  const term = isAtTerminal(bus) ? "at-term" : "en-route";
+
   return L.divIcon({
     className: "tb-leaflet-bus-icon",
     html: `
-      <div class="tb-leaflet-bus-pill ${cls} ${sel}">
+      <div class="tb-leaflet-bus-pill ${cls} ${sel} ${term}">
         <i class="fas fa-bus"></i>
+        <span class="tb-mini-flag">${isAtTerminal(bus) ? "T" : "R"}</span>
       </div>
     `,
     iconSize: [38, 38],
     iconAnchor: [19, 19],
   });
 }
-
 function addOrUpdateBusMarker(bus) {
   if (!map) return;
+  if (!Number.isFinite(Number(bus.lat)) || !Number.isFinite(Number(bus.lng))) return;
 
-  const pos = [bus.lat, bus.lng];
+  const pos = [Number(bus.lat), Number(bus.lng)];
   const existing = busMarkers.get(bus.id);
 
   if (existing) {
@@ -464,13 +503,11 @@ function addOrUpdateBusMarker(bus) {
   m.on("click", () => selectBus(bus));
   busMarkers.set(bus.id, m);
 }
-
 function removeMarker(id) {
   const m = busMarkers.get(id);
   if (m && map) map.removeLayer(m);
   busMarkers.delete(id);
 }
-
 function refreshAllBusMarkerIcons() {
   for (const b of buses.value) {
     const m = busMarkers.get(b.id);
@@ -479,37 +516,39 @@ function refreshAllBusMarkerIcons() {
   }
 }
 
+/* ========= Focus helpers ========= */
 function focusBus(bus) {
   if (!map) return;
-  map.flyTo([bus.lat, bus.lng], Math.max(map.getZoom(), 16), { duration: 0.5 });
+  map.flyTo([Number(bus.lat), Number(bus.lng)], Math.max(map.getZoom(), 16), { duration: 0.5 });
 }
-
+function focusTerminal(t) {
+  if (!map) return;
+  const lat = Number(t.lat);
+  const lng = Number(t.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+  map.flyTo([lat, lng], Math.max(map.getZoom(), 15), { duration: 0.5 });
+}
 function centerOnUser() {
   if (!map) return;
-
   if (!hasUserLocation.value || !currentPos.value) {
-    alert("Location is off. Tap “Turn On Location” to center on you.");
+    alert("Location is off. Turn on location from the app overlay.");
     return;
   }
-
   map.flyTo([currentPos.value.lat, currentPos.value.lng], 16, { duration: 0.5 });
 }
-
 function fitToBusesIfAny() {
   if (!map) return;
   const pts = buses.value
-    .filter((b) => isFinite(b.lat) && isFinite(b.lng))
-    .map((b) => [b.lat, b.lng]);
-
-  if (pts.length === 0) return;
-
-  const bounds = L.latLngBounds(pts);
-  map.fitBounds(bounds, { padding: [40, 40] });
+    .filter((b) => Number.isFinite(Number(b.lat)) && Number.isFinite(Number(b.lng)))
+    .map((b) => [Number(b.lat), Number(b.lng)]);
+  if (!pts.length) return;
+  map.fitBounds(L.latLngBounds(pts), { padding: [40, 40] });
 }
 
 /* ========= Selection ========= */
 function selectBus(bus) {
   selectedBus.value = bus;
+  selectedTerminal.value = null;
   refreshAllBusMarkerIcons();
   collapseSheet();
   focusBus(bus);
@@ -519,13 +558,79 @@ function closeSelected() {
   refreshAllBusMarkerIcons();
   openSheetMid();
 }
+function selectTerminal(t) {
+  selectedTerminal.value = t;
+  selectedBus.value = null;
+  refreshAllBusMarkerIcons();
+  collapseSheet();
+  focusTerminal(t);
+}
+function closeTerminal() {
+  selectedTerminal.value = null;
+  openSheetMid();
+}
+
+/* ========= Terminal label ========= */
+function terminalName(id) {
+  const t = terminalById.value.get(Number(id));
+  return t?.terminal_name || null;
+}
+function terminalLabel(bus) {
+  if (bus?.terminalStateLabel) return bus.terminalStateLabel;
+
+  const curId = bus?.terminal_state?.current_terminal_id ?? bus?.current_terminal_id ?? null;
+  const tgtId = bus?.terminal_state?.target_terminal_id ?? bus?.target_terminal_id ?? null;
+
+  const curName = bus?.terminal_state?.current_terminal_name || terminalName(curId) || "—";
+  const tgtName = bus?.terminal_state?.target_terminal_name || terminalName(tgtId) || "—";
+
+  if (isAtTerminal(bus)) return `At ${curName}`;
+  return `${curName} → ${tgtName}`;
+}
+
+/* ✅ Robust terminal-state detection (fixes "always 0") */
+function isAtTerminal(bus) {
+  const v =
+    bus?.at_terminal ??
+    bus?.atTerminal ??
+    bus?.terminal_state?.at_terminal ??
+    bus?.terminal_state?.atTerminal ??
+    bus?.terminal_state?.atTerminalFlag;
+
+  return Number(v) === 1 || v === true;
+}
+
+function busCurrentTerminalId(bus) {
+  const v =
+    bus?.terminal_state?.current_terminal_id ??
+    bus?.terminal_state?.currentTerminalId ??
+    bus?.current_terminal_id ??
+    bus?.currentTerminalId;
+
+  const n = Number(v);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function busesInsideCount(terminalId) {
+  const tid = Number(terminalId);
+  return buses.value.filter((b) => isAtTerminal(b) && busCurrentTerminalId(b) === tid).length;
+}
+
+function busesInsideList(terminalId) {
+  const tid = Number(terminalId);
+  return buses.value
+    .filter((b) => isAtTerminal(b) && busCurrentTerminalId(b) === tid)
+    .map((b) => b.bus_code || b.trackNo || b.plate_no || `#${b.id}`)
+    .slice(0, 8);
+}
 
 /* ========= Distance + ETA ========= */
 function distanceKm(bus) {
   if (!hasUserLocation.value || !currentPos.value) return Infinity;
 
   const a = currentPos.value;
-  const b = { lat: bus.lat, lng: bus.lng };
+  const b = { lat: Number(bus.lat), lng: Number(bus.lng) };
+  if (!Number.isFinite(b.lat) || !Number.isFinite(b.lng)) return Infinity;
 
   const R = 6371;
   const dLat = ((b.lat - a.lat) * Math.PI) / 180;
@@ -533,14 +638,10 @@ function distanceKm(bus) {
   const lat1 = (a.lat * Math.PI) / 180;
   const lat2 = (b.lat * Math.PI) / 180;
 
-  const x =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.sin(dLon / 2) * Math.sin(dLon / 2) * Math.cos(lat1) * Math.cos(lat2);
-
+  const x = Math.sin(dLat / 2) ** 2 + Math.sin(dLon / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
   const c = 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
   return R * c;
 }
-
 function formatKm(n) {
   if (!isFinite(n)) return "—";
   if (n < 1) return `${Math.round(n * 1000)} m`;
@@ -557,7 +658,6 @@ function etaMinutes(bus) {
   const travelMin = (km / AVG_SPEED_KMH) * 60;
   return Math.max(1, Math.round(travelMin + BASE_DELAY_MIN));
 }
-
 function formatEta(mins) {
   if (!isFinite(mins)) return "—";
   if (mins <= 1) return "1 min";
@@ -567,24 +667,12 @@ function formatEta(mins) {
   return `${h}h ${m}m`;
 }
 
-/* ========= Occupancy UI helpers ========= */
+/* ========= Occupancy label ========= */
 function seatsLabel(bus) {
   const cap = Number(bus.capacity ?? 0);
   const used = Number(bus.seats ?? 0);
   if (!cap || cap < 1) return "—";
   return `${used}/${cap} seats`;
-}
-function occRatio(bus) {
-  const cap = Number(bus.capacity ?? 0);
-  const used = Number(bus.seats ?? 0);
-  if (!cap || cap < 1) return 0;
-  return Math.max(0, Math.min(1, used / cap));
-}
-function occClass(bus) {
-  const r = occRatio(bus);
-  if (r >= 0.85) return "full";
-  if (r >= 0.55) return "mid";
-  return "low";
 }
 
 /* ========= Filtered list ========= */
@@ -607,13 +695,15 @@ const filteredBuses = computed(() => {
     const idStr = String(b.id || "").toLowerCase();
     const codeStr = String(b.bus_code || b.trackNo || "").toLowerCase();
     const plateStr = String(b.plate_no || "").toLowerCase();
-    return idStr.includes(q) || codeStr.includes(q) || plateStr.includes(q);
+    const termStr = String(terminalLabel(b) || "").toLowerCase();
+    const dirStr = String(b.directionLabel || "").toLowerCase();
+    return idStr.includes(q) || codeStr.includes(q) || plateStr.includes(q) || termStr.includes(q) || dirStr.includes(q);
   });
 });
 
 /* =========================================================
    Bottom Sheet Drag
-   ========================================================= */
+========================================================= */
 const isDragging = ref(false);
 const sheetY = ref(0);
 const sheetAnimating = ref(true);
@@ -760,7 +850,7 @@ function onSheetPointerUp() {
   window.removeEventListener("pointerup", onSheetPointerUp);
 }
 
-/* ========= Live sync to markers ========= */
+/* ========= Sync markers ========= */
 function syncMarkersToBuses() {
   const next = buses.value;
 
@@ -772,10 +862,7 @@ function syncMarkersToBuses() {
   if (map) {
     next.forEach(addOrUpdateBusMarker);
     refreshAllBusMarkerIcons();
-
-    if (!hasUserLocation.value) {
-      fitToBusesIfAny();
-    }
+    if (!hasUserLocation.value) fitToBusesIfAny();
   }
 
   if (selectedBus.value) {
@@ -784,12 +871,29 @@ function syncMarkersToBuses() {
   }
 }
 
+watch(buses, () => syncMarkersToBuses(), { deep: true });
+
 watch(
-  buses,
+  () => currentPos.value,
   () => {
-    syncMarkersToBuses();
+    if (!map) return;
+    if (!hasUserLocation.value) {
+      removeUserMarker();
+      return;
+    }
+    ensureUserMarker();
+    updateUserMarker();
   },
   { deep: true }
+);
+
+/* also re-check query changes (if user navigates while staying on page) */
+watch(
+  () => route.query?.terminalId,
+  async () => {
+    await nextTick();
+    await maybeFocusTerminalFromQuery();
+  }
 );
 
 /* ========= Lifecycle ========= */
@@ -803,25 +907,31 @@ onMounted(async () => {
   requestAnimationFrame(() => map?.invalidateSize());
   setTimeout(() => map?.invalidateSize(), 350);
 
-  // ✅ start polling in composable
+  // start buses
   startLive();
-
-  // ✅ run once now so markers appear immediately
   await fetchOnce();
   syncMarkersToBuses();
+
+  // terminals
+  await loadTerminalsOnce();
+  terminalPoll = setInterval(loadTerminalsOnce, 10000);
+
+  // user marker (if already connected globally)
+  if (hasUserLocation.value) {
+    ensureUserMarker();
+    updateUserMarker();
+  }
 });
 
 onUnmounted(() => {
   stopLive();
 
-  if (geoWatchId !== null && navigator.geolocation) {
-    navigator.geolocation.clearWatch(geoWatchId);
-  }
-
   window.removeEventListener("resize", openSheetMid);
   window.removeEventListener("pointermove", onSheetPointerMove);
   window.removeEventListener("pointerup", onSheetPointerUp);
   cancelAnimationFrame(raf);
+
+  if (terminalPoll) clearInterval(terminalPoll);
 
   if (map) {
     map.off();
@@ -843,143 +953,6 @@ onUnmounted(() => {
   width: 100%;
   overflow: hidden;
   background: var(--light-bg);
-}
-
-/* ===== Permission Overlay ===== */
-.tb-permission-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(245, 247, 250, 0.85);
-  backdrop-filter: blur(8px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-  padding: 16px;
-}
-
-.tb-permission-card {
-  width: min(420px, 100%);
-  background: white;
-  border: 2px solid var(--border-light);
-  border-radius: 18px;
-  padding: 20px 18px;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.12);
-  text-align: center;
-}
-
-.tb-permission-icon {
-  width: 60px;
-  height: 60px;
-  border-radius: 999px;
-  margin: 0 auto 12px;
-  background: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-teal) 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  font-size: 26px;
-}
-
-.tb-permission-title {
-  font-size: 18px;
-  font-weight: 800;
-  margin: 0 0 6px 0;
-}
-
-.tb-permission-text {
-  font-size: 14px;
-  color: var(--text-gray);
-  margin: 0 0 14px 0;
-  line-height: 1.4;
-}
-
-/* Gate status pill */
-.tb-gate-status {
-  margin: 12px 0 14px;
-  border-radius: 14px;
-  padding: 10px 12px;
-  font-weight: 900;
-  font-size: 12px;
-  border: 2px solid var(--border-light);
-  color: var(--text-dark);
-  background: rgba(17, 24, 39, 0.02);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-.tb-gate-status.warn {
-  color: #b45309;
-  border-color: rgba(180, 83, 9, 0.25);
-  background: rgba(180, 83, 9, 0.08);
-}
-.tb-gate-status.ok {
-  color: #166534;
-  border-color: rgba(22, 101, 52, 0.25);
-  background: rgba(22, 101, 52, 0.08);
-}
-.tb-gate-status.bad {
-  color: #b91c1c;
-  border-color: rgba(185, 28, 28, 0.25);
-  background: rgba(185, 28, 28, 0.08);
-}
-
-.tb-gate-help {
-  margin-top: 12px;
-  text-align: left;
-  border: 2px dashed var(--border-light);
-  border-radius: 14px;
-  padding: 12px;
-  background: rgba(255, 255, 255, 0.7);
-}
-.tb-gate-help-title {
-  font-weight: 900;
-  font-size: 13px;
-  margin-bottom: 8px;
-  color: var(--text-dark);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.tb-gate-help-list {
-  margin: 0;
-  padding-left: 18px;
-  color: var(--text-gray);
-  font-weight: 800;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.tb-btn {
-  width: 100%;
-  border: none;
-  border-radius: 12px;
-  padding: 12px 14px;
-  font-weight: 700;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-.tb-btn:active {
-  transform: scale(0.98);
-}
-.tb-btn:disabled {
-  opacity: 0.65;
-  cursor: not-allowed;
-}
-
-.tb-btn-primary {
-  background: linear-gradient(135deg, var(--primary-blue) 0%, #0d47a1 100%);
-  color: white;
-  margin-bottom: 10px;
-}
-.tb-btn-ghost {
-  background: transparent;
-  border: 2px solid var(--border-light);
-  color: var(--text-dark);
 }
 
 /* ===== Map ===== */
@@ -1026,7 +999,7 @@ onUnmounted(() => {
   transform: scale(0.92);
 }
 
-/* Floating card */
+/* Floating bus card */
 .tb-bus-card {
   position: absolute;
   left: 16px;
@@ -1128,6 +1101,75 @@ onUnmounted(() => {
   transform: scale(0.98);
 }
 
+/* Terminal card */
+.tb-term-card {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  top: 16px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  border: 2px solid var(--border-light);
+  border-radius: 14px;
+  padding: 14px 14px 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.14);
+  z-index: 20;
+}
+.tb-term-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.tb-term-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 1000;
+  color: var(--text-dark);
+  font-size: 15px;
+}
+.tb-term-title i {
+  color: #0284c7;
+}
+.tb-term-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-gray);
+  font-weight: 800;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+.tb-term-stats {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+.tb-term-stat {
+  border: 2px solid var(--border-light);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(17, 24, 39, 0.02);
+}
+.tb-term-stat__label {
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--text-gray);
+}
+.tb-term-stat__value {
+  margin-top: 4px;
+  font-size: 16px;
+  font-weight: 1000;
+  color: var(--text-dark);
+}
+.tb-term-small {
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(38, 43, 51, 0.72);
+}
+
 /* Bottom sheet */
 .tb-sheet {
   position: absolute;
@@ -1196,15 +1238,9 @@ onUnmounted(() => {
   animation: tbPulse 1.3s infinite;
 }
 @keyframes tbPulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(0, 131, 143, 0.35);
-  }
-  70% {
-    box-shadow: 0 0 0 10px rgba(0, 131, 143, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(0, 131, 143, 0);
-  }
+  0% { box-shadow: 0 0 0 0 rgba(0, 131, 143, 0.35); }
+  70% { box-shadow: 0 0 0 10px rgba(0, 131, 143, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 131, 143, 0); }
 }
 .tb-sheet-count {
   font-size: 12px;
@@ -1231,9 +1267,7 @@ onUnmounted(() => {
   border-radius: 14px;
   padding: 10px 12px;
 }
-.tb-search i {
-  color: var(--text-gray);
-}
+.tb-search i { color: var(--text-gray); }
 .tb-search-input {
   border: none;
   outline: none;
@@ -1252,9 +1286,7 @@ onUnmounted(() => {
   border-radius: 10px;
   cursor: pointer;
 }
-.tb-search-clear:active {
-  transform: scale(0.92);
-}
+.tb-search-clear:active { transform: scale(0.92); }
 
 .tb-chips {
   display: flex;
@@ -1296,14 +1328,9 @@ onUnmounted(() => {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
 }
-.tb-sheet-list {
-  padding: 10px;
-}
-.tb-list-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
+.tb-sheet-list { padding: 10px; }
+.tb-list-wrap { display: flex; flex-direction: column; gap: 10px; }
+
 .tb-bus-row {
   background: white;
   border: 2px solid var(--border-light);
@@ -1315,9 +1342,7 @@ onUnmounted(() => {
   cursor: pointer;
   transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
 }
-.tb-bus-row:active {
-  transform: scale(0.99);
-}
+.tb-bus-row:active { transform: scale(0.99); }
 .tb-bus-row.selected {
   border-color: rgba(30, 136, 229, 0.35);
   box-shadow: 0 14px 26px rgba(30, 136, 229, 0.12);
@@ -1335,28 +1360,13 @@ onUnmounted(() => {
   flex-shrink: 0;
   padding: 8px 0;
 }
-.tb-bus-badge.low {
-  background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%);
-}
-.tb-bus-badge.mid {
-  background: linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%);
-}
-.tb-bus-badge.full {
-  background: linear-gradient(135deg, #ef4444 0%, #f87171 100%);
-}
-.tb-bus-badge-top {
-  font-size: 15px;
-  line-height: 1;
-}
-.tb-bus-badge-sub {
-  font-size: 10px;
-  opacity: 0.9;
-  margin-top: 4px;
-}
-.tb-bus-row-main {
-  flex: 1;
-  min-width: 0;
-}
+.tb-bus-badge.low { background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%); }
+.tb-bus-badge.mid { background: linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%); }
+.tb-bus-badge.full { background: linear-gradient(135deg, #ef4444 0%, #f87171 100%); }
+.tb-bus-badge-top { font-size: 15px; line-height: 1; }
+.tb-bus-badge-sub { font-size: 10px; opacity: 0.9; margin-top: 4px; }
+
+.tb-bus-row-main { flex: 1; min-width: 0; }
 .tb-row-line1 {
   display: flex;
   align-items: flex-start;
@@ -1382,17 +1392,9 @@ onUnmounted(() => {
   font-weight: 800;
   font-size: 12px;
 }
-.tb-metric {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.tb-muted {
-  opacity: 0.85;
-}
-.tb-dotsep {
-  opacity: 0.5;
-}
+.tb-metric { display: inline-flex; align-items: center; gap: 6px; }
+.tb-muted { opacity: 0.85; }
+.tb-dotsep { opacity: 0.5; }
 .tb-bus-row-right {
   color: var(--border-medium);
   font-size: 18px;
@@ -1434,12 +1436,46 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.7);
 }
 
-/* Leaflet markers */
-.tb-leaflet-bus-icon {
-  background: transparent;
-  border: none;
+/* chips */
+.tb-chip-term{
+  border-color: rgba(14,165,233,0.22);
+  background: rgba(14,165,233,0.08);
+  color: #0f172a;
 }
-.tb-leaflet-bus-pill {
+.tb-chip-term.at{
+  border-color: rgba(22,101,52,0.25);
+  background: rgba(22,101,52,0.08);
+  color: #166534;
+}
+.tb-chip-dir{
+  border-color: rgba(59,130,246,0.22);
+  background: rgba(59,130,246,0.08);
+  color: #1e40af;
+}
+
+/* list row mini pill */
+.tb-mini-pill{
+  display:inline-flex;
+  align-items:center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 2px solid rgba(14,165,233,0.22);
+  background: rgba(14,165,233,0.08);
+  color: #0369a1;
+  font-weight: 900;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.tb-mini-pill.at{
+  border-color: rgba(22,101,52,0.25);
+  background: rgba(22,101,52,0.08);
+  color: #166534;
+}
+
+/* Leaflet markers */
+.tb-leaflet-bus-icon { background: transparent; border: none; }
+.tb-leaflet-bus-pill{
   width: 38px;
   height: 38px;
   border-radius: 999px;
@@ -1450,47 +1486,39 @@ onUnmounted(() => {
   justify-content: center;
   box-shadow: 0 10px 22px rgba(0, 0, 0, 0.12);
   transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
-}
-.tb-leaflet-bus-pill i {
-  color: var(--accent-teal);
-  font-size: 18px;
-}
-.tb-leaflet-bus-pill.low {
-  border-color: #16a34a;
-}
-.tb-leaflet-bus-pill.low i {
-  color: #16a34a;
-}
-.tb-leaflet-bus-pill.mid {
-  border-color: #f59e0b;
-}
-.tb-leaflet-bus-pill.mid i {
-  color: #f59e0b;
-}
-.tb-leaflet-bus-pill.full {
-  border-color: #ef4444;
-}
-.tb-leaflet-bus-pill.full i {
-  color: #ef4444;
-}
-.tb-leaflet-bus-pill.selected {
-  transform: scale(1.12);
-  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.18);
   position: relative;
 }
-.tb-leaflet-bus-pill.selected::after {
-  content: "";
+.tb-leaflet-bus-pill i { color: var(--accent-teal); font-size: 18px; }
+.tb-leaflet-bus-pill.low { border-color: #16a34a; }
+.tb-leaflet-bus-pill.low i { color: #16a34a; }
+.tb-leaflet-bus-pill.mid { border-color: #f59e0b; }
+.tb-leaflet-bus-pill.mid i { color: #f59e0b; }
+.tb-leaflet-bus-pill.full { border-color: #ef4444; }
+.tb-leaflet-bus-pill.full i { color: #ef4444; }
+.tb-leaflet-bus-pill.selected{
+  transform: scale(1.12);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.18);
+}
+.tb-mini-flag{
   position: absolute;
-  inset: -6px;
+  right: -4px;
+  top: -4px;
+  width: 16px;
+  height: 16px;
   border-radius: 999px;
-  border: 2px solid currentColor;
-  opacity: 0.22;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size: 10px;
+  font-weight: 1000;
+  border: 2px solid #fff;
+  box-shadow: 0 10px 18px rgba(0,0,0,0.12);
 }
-.tb-leaflet-user-icon {
-  background: transparent;
-  border: none;
-}
-.tb-leaflet-user-dot {
+.tb-leaflet-bus-pill.at-term .tb-mini-flag{ background: #16a34a; color: #fff; }
+.tb-leaflet-bus-pill.en-route .tb-mini-flag{ background: #0ea5e9; color: #fff; }
+
+.tb-leaflet-user-icon { background: transparent; border: none; }
+.tb-leaflet-user-dot{
   width: 16px;
   height: 16px;
   border-radius: 999px;
@@ -1499,37 +1527,33 @@ onUnmounted(() => {
   box-shadow: 0 6px 16px rgba(30, 136, 229, 0.25);
 }
 
+/* terminals marker */
+.tb-leaflet-term-icon{ background: transparent; border: none; }
+.tb-leaflet-term-pill{
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.98);
+  border: 2px solid rgba(14,165,233,0.55);
+  box-shadow: 0 10px 22px rgba(0,0,0,0.12);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.tb-leaflet-term-pill i{
+  color: #0284c7;
+  font-size: 16px;
+}
+
 /* transitions */
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
 .slide-up-enter-active,
-.slide-up-leave-active {
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
+.slide-up-leave-active { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
 .slide-up-enter-from,
-.slide-up-leave-to {
-  opacity: 0;
-  transform: translateY(10px);
-}
+.slide-up-leave-to { opacity: 0; transform: translateY(10px); }
+
 .list-enter-active,
-.list-leave-active {
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.list-enter-from {
-  opacity: 0;
-  transform: translateY(10px);
-}
-.list-leave-to {
-  opacity: 0;
-  transform: translateY(-10px);
-}
-.list-move {
-  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-}
+.list-leave-active { transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
+.list-enter-from { opacity: 0; transform: translateY(10px); }
+.list-leave-to { opacity: 0; transform: translateY(-10px); }
+.list-move { transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
 </style>
