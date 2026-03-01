@@ -27,7 +27,7 @@ import AdminDashboard from "../pages/admin/AdminDashboard.vue"
 import AdminBusesPage from "../pages/admin/AdminBusesPage.vue"
 import AdminNotificationPage from "../pages/admin/AdminNotificationPage.vue"
 import AdminLiveTrackPage from "../pages/admin/AdminLiveTrackPage.vue"
-import AdminTerminalPage from "../pages/admin/adminTerminalPage.vue"
+import AdminTerminalPage from "../pages/admin/AdminTerminalPage.vue"
 import AdminRoutesPage from "../pages/admin/AdminRoutesPage.vue"
 import AdminAnalyticsPage from "../pages/admin/AdminAnalyticsPage.vue"
 
