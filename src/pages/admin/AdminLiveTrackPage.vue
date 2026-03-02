@@ -429,7 +429,7 @@ const FALLBACK = { lat: 12.8797, lng: 121.774 };
    ✅ Terminal range settings
    - match your backend arrival_m default (120m)
 ========================= */
-const TERMINAL_RANGE_M = 120;
+const TERMINAL_RANGE_M = 60;
 
 // circle overlay for selected terminal
 let terminalRangeCircle = null;
